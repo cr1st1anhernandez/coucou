@@ -19,6 +19,7 @@ import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
+import { makeCurrent, rescheduleNags, setStatusById } from "./sessions";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -143,7 +144,7 @@ export class Island {
         State.pendingApproval = null;
         State.isPinned = false;
         this.fsm.pinned = false;
-        State.updateTask("integration_claude", "working");
+        setStatusById(req.sessionId, "working");
         State.setPillBadge("integration_claude", null);
         this.setView(State.defaultView());
       },
@@ -167,6 +168,12 @@ export class Island {
       },
       openSettingsWindow: () => void Bridge.openSettingsWindow(),
       blip: () => Sound.play("blip"),
+      selectSession: (id) => {
+        if (!makeCurrent(id)) return;
+        Sound.play("blip");
+        State.setFocus("integration_claude");
+        this.setView("overview");
+      },
     };
 
     this.wakeStrip = h("div", { id: "wake-strip" });
@@ -337,6 +344,21 @@ export class Island {
   /** An alert stopped waiting for an answer: let the island auto-close again. */
   dropPin() {
     this.fsm.pinned = false;
+  }
+
+  /**
+   * A Claude Code session has been waiting on you too long: Mochi startles,
+   * fidgets, and the island peeks out so you notice even from another window.
+   */
+  nudge() {
+    Sound.resume();
+    Sound.play("question");
+    this.engine.squash();
+    this.engine.triggerEmote("surprised", 1);
+    window.setTimeout(() => this.engine.doRoll(700, 1), 350);
+    window.setTimeout(() => this.engine.triggerEmote("annoyed"), 1100);
+    this.reveal();
+    this.ensureRunning();
   }
 
   // ── File drop ───────────────────────────────────────────────────────────────
@@ -874,6 +896,7 @@ export class Island {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
+    rescheduleNags();
     State.notify();
   }
 

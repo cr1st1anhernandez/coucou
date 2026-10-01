@@ -11,6 +11,7 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
+import { STATUS_COLORS, STATUS_LABELS, isWaiting, summaryText, waitedFor } from "../island/sessions";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -26,6 +27,8 @@ export interface ViewActions {
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
   blip(): void;
+  /** Puts a Claude Code session on the Warp pill and shows it. */
+  selectSession(id: string): void;
 }
 
 export interface ViewHost {
@@ -81,6 +84,13 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, svg(ICONS.house, 13));
   const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
   const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const sessionCount = h("span", { class: "tab-count" });
+  const tabSessions = h(
+    "button",
+    { class: "tab", title: "Sesiones", onclick: () => go("sessions") },
+    svg(ICONS.stack, 13),
+    sessionCount,
+  );
 
   const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, svg(ICONS.gear, 14));
   const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
@@ -93,7 +103,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabDrop),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -104,6 +114,10 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabSessions.classList.toggle("on", v === "sessions");
+      const n = State.sessions.length;
+      sessionCount.textContent = n > 0 ? String(n) : "";
+      sessionCount.classList.toggle("alert", State.sessions.some(isWaiting));
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
       gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
@@ -140,6 +154,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let lastFocus: string | null = null;
   let mode: "ticker" | "card" | null = null;
   let cardKey = "";
+  let tickerSession: string | null = null;
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -175,7 +190,8 @@ function buildOverview(actions: ViewActions): ViewHost {
       // The Warp pill with a live Claude Code session keeps the ticker; every other
       // pill shows its own card, exactly like IntegrationCardView.
       const sessionActive =
-        task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
+        task?.id === "integration_claude" &&
+        (task.state !== "idle" || task.steps.length > 0 || State.sessions.length > 0);
 
       if (task && sessionActive) {
         if (mode !== "ticker") {
@@ -184,12 +200,26 @@ function buildOverview(actions: ViewActions): ViewHost {
           mode = "ticker";
           cardKey = "";
         }
+        if ((task.sessionId ?? null) !== tickerSession) {
+          tickerSession = task.sessionId ?? null;
+          ticker.reset();
+        }
         clear(who);
         who.append(
           dot(task.color, 7),
           h("span", { class: "name", text: task.name }),
           h("span", { class: "tool", text: task.source === "claudeCode" ? "Claude Code" : "n8n" }),
         );
+        const others = State.sessions.length - 1;
+        if (task.id === "integration_claude" && others > 0) {
+          const waiting = State.sessions.some((s) => s.id !== task.sessionId && isWaiting(s));
+          who.append(h("button", {
+            class: waiting ? "more-sessions alert" : "more-sessions",
+            title: "Ver todas las sesiones",
+            text: `+${others}`,
+            onclick: () => actions.setView("sessions"),
+          }));
+        }
         if (task.steps.length > 1) {
           who.append(h("span", {
             class: "count",
@@ -364,18 +394,21 @@ function buildError(actions: ViewActions): ViewHost {
 
 function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title" });
+  const title = h("div", { class: "title one-line" });
+  const summary = h("div", { class: "summary" });
   const row = h("div", { class: "actions" },
     btn("Open terminal", "primary", () => actions.openTerminal()),
     btn("OK", "secondary", () => actions.collapse()),
   );
-  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, row)));
+  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, summary, row)));
   return {
     el,
     sync() {
       clear(who);
       who.append(agentWho(State.focusTask, "Claude Code finished"));
       title.textContent = State.focusTask?.steps.at(-1) ?? "Session finished";
+      const session = State.currentSession;
+      summary.textContent = session ? summaryText(session.summary) : "";
     },
   };
 }
@@ -471,6 +504,63 @@ function buildSettings(actions: ViewActions): ViewHost {
   };
 }
 
+// ── Sessions ──────────────────────────────────────────────────────────────────
+
+/** Every live Claude Code session: name, what it's doing, and whether it needs you. */
+function buildSessions(actions: ViewActions): ViewHost {
+  const list = h("div", { class: "session-list" });
+  const empty = h("div", { class: "sub", text: "No hay sesiones de Claude Code abiertas." });
+  const body = h("div", { class: "sessions-body" }, list);
+  const el = h("div", { class: "view" }, card(null, body));
+  let key = "";
+
+  function row(id: string): HTMLElement | null {
+    const s = State.sessions.find((x) => x.id === id);
+    if (!s) return null;
+    const color = STATUS_COLORS[s.status];
+    const status = isWaiting(s) ? `${STATUS_LABELS[s.status]} · ${waitedFor(s)}` : STATUS_LABELS[s.status];
+    const detail =
+      s.status === "finished" || s.status === "error" || s.status === "waiting"
+        ? summaryText(s.summary)
+        : s.steps.at(-1) ?? "";
+    const r = h(
+      "button",
+      {
+        class: s.id === State.currentSessionId ? "session-row on" : "session-row",
+        title: s.cwd,
+        onclick: () => actions.selectSession(s.id),
+      },
+      dot(color, 7),
+      h("span", { class: "session-name", text: s.name }),
+      h("span", { class: "session-status", style: `color:${color}`, text: status }),
+      h("span", { class: "session-detail", text: detail }),
+    );
+    if (isWaiting(s)) r.classList.add("waiting");
+    return r;
+  }
+
+  return {
+    el,
+    sync() {
+      const next = State.sessions
+        .map((s) => [s.id, s.status, s.steps.at(-1), s.waitingSince, waitedFor(s),
+          summaryText(s.summary), s.id === State.currentSessionId].join("~"))
+        .join("|");
+      if (next === key) return;
+      key = next;
+      clear(list);
+      if (State.sessions.length === 0) {
+        list.append(empty);
+        return;
+      }
+      for (const s of State.sessions) {
+        const r = row(s.id);
+        if (r) list.append(r);
+      }
+    },
+  };
+}
+
 // ── Placeholders filled in later stages ───────────────────────────────────────
 
 function buildPlaceholder(title: string, sub: string): ViewHost {
@@ -499,6 +589,7 @@ export function buildViews(
   map.set("confused", buildConfused());
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
+  map.set("sessions", buildSessions(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("upload", buildUpload());
   map.set("uploading", buildUploading());

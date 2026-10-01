@@ -21,6 +21,8 @@ pub struct Settings {
     pub hooks_installed: bool,
     /// Claude model used by the chat. Changeable in the settings window.
     pub model: String,
+    /// Minutes a Claude Code session may wait on the user before Mochi nags. 0 = off.
+    pub waiting_alert_minutes: f64,
 }
 
 fn default_model() -> String {
@@ -44,6 +46,7 @@ impl Default for Settings {
             autostart: false,
             hooks_installed: false,
             model: default_model(),
+            waiting_alert_minutes: 2.0,
         }
     }
 }

@@ -360,6 +360,16 @@ function integrationsSection(present: Record<string, boolean>): HTMLElement {
 
 // ── General section ───────────────────────────────────────────────────────────
 
+/** Minutes a session may wait on you before Mochi nags; 0 = never. */
+const WAITING_ALERT_CHOICES: [number, string][] = [
+  [0, "Nunca"],
+  [1, "Tras 1 min"],
+  [2, "Tras 2 min"],
+  [3, "Tras 3 min"],
+  [5, "Tras 5 min"],
+  [10, "Tras 10 min"],
+];
+
 function generalSection(): HTMLElement {
   const volume = h("input", {
     type: "range", min: "0", max: "0.2", step: "0.005",
@@ -392,6 +402,22 @@ function generalSection(): HTMLElement {
     void save();
   });
 
+  const waitingAlert = h("select", {}) as HTMLSelectElement;
+  for (const [value, label] of WAITING_ALERT_CHOICES) {
+    waitingAlert.append(h("option", { value: String(value), text: label }));
+  }
+  if (!WAITING_ALERT_CHOICES.some(([v]) => v === settings.waitingAlertMinutes)) {
+    waitingAlert.append(h("option", {
+      value: String(settings.waitingAlertMinutes),
+      text: `${settings.waitingAlertMinutes} min`,
+    }));
+  }
+  waitingAlert.value = String(settings.waitingAlertMinutes);
+  waitingAlert.addEventListener("change", () => {
+    settings.waitingAlertMinutes = Number(waitingAlert.value);
+    void save();
+  });
+
   return h(
     "section",
     {},
@@ -405,6 +431,11 @@ function generalSection(): HTMLElement {
       h("label", { text: "Auto-close" }),
       autoClose,
       h("span", { class: "hint", text: "seconds after you leave the island" }),
+    ),
+    h("div", { class: "row" },
+      h("label", { text: "Claude te espera" }),
+      waitingAlert,
+      h("span", { class: "hint", text: "Mochi se inquieta y suena si una sesión espera tu respuesta" }),
     ),
     h("div", { class: "row" },
       h("label", { text: "Island lives on" }),
