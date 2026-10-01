@@ -162,12 +162,32 @@ fn read_event() -> Option<(String, String)> {
         ("term_program", "TERM_PROGRAM"),
         ("wt_session", "WT_SESSION"),
         ("term_session_id", "TERM_SESSION_ID"),
-        ("vscode_pid", "VSCODE_PID"),
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
     ] {
         if !map.contains_key(key) {
             let value = std::env::var(var).unwrap_or_default();
             map.insert(key.into(), serde_json::Value::String(value));
+        }
+    }
+
+    // The repo (or worktree) the session works in, whatever subfolder it is in
+    // right now: the island names the session after it.
+    let root = map
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .and_then(|cwd| repo_root_name(std::path::Path::new(cwd)));
+    if let Some(root) = root {
+        map.insert("coucou_root".into(), serde_json::Value::String(root));
+    }
+
+    // Counted before truncation: the island only ever sees cut-down strings, and
+    // a long Write would otherwise report a fraction of its lines.
+    if event == "PostToolUse" {
+        if let Some((added, removed)) = edit_line_counts(map) {
+            map.insert(
+                "coucou_lines".into(),
+                serde_json::json!({ "added": added, "removed": removed }),
+            );
         }
     }
 
@@ -179,6 +199,57 @@ fn read_event() -> Option<(String, String)> {
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
+/// Name of the nearest folder holding a `.git` — a directory in a repo, a file
+/// in a worktree, so a worktree is named after itself. A handful of stats at most.
+fn repo_root_name(cwd: &std::path::Path) -> Option<String> {
+    cwd.ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .and_then(|dir| dir.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
+/// Lines an edit added and removed, for the island's end-of-turn summary.
+/// None for anything that isn't a file edit.
+fn edit_line_counts(map: &serde_json::Map<String, serde_json::Value>) -> Option<(usize, usize)> {
+    use serde_json::Value;
+    let tool = map.get("tool_name")?.as_str()?;
+    let input = map.get("tool_input")?;
+    let text = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+    let pairs: Vec<(String, String)> = match tool {
+        "Write" => vec![(String::new(), text(input, "content"))],
+        "Edit" => vec![(text(input, "old_string"), text(input, "new_string"))],
+        "NotebookEdit" => vec![(String::new(), text(input, "new_source"))],
+        "MultiEdit" => input
+            .get("edits")?
+            .as_array()?
+            .iter()
+            .map(|e| (text(e, "old_string"), text(e, "new_string")))
+            .collect(),
+        _ => return None,
+    };
+    Some(pairs.iter().fold((0, 0), |(a, r), (old, new)| {
+        let (da, dr) = line_diff(old, new);
+        (a + da, r + dr)
+    }))
+}
+
+/// A multiset line diff: a line present on both sides cancels out, so the
+/// context an Edit carries around its change isn't counted as churn.
+fn line_diff(old: &str, new: &str) -> (usize, usize) {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for line in old.lines() {
+        *counts.entry(line).or_default() += 1;
+    }
+    let mut added = 0;
+    for line in new.lines() {
+        match counts.get_mut(line) {
+            Some(c) if *c > 0 => *c -= 1,
+            _ => added += 1,
+        }
+    }
+    (added, counts.values().sum())
+}
+
 fn truncate_strings(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(s) => {
@@ -253,6 +324,44 @@ mod tests {
         assert!(decision_json("maybe").is_none());
         // The shape the app used to send must not be mistaken for a decision.
         assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+    }
+
+    #[test]
+    fn sessions_are_named_after_the_repo_root() {
+        let tmp = std::env::temp_dir().join(format!("coucou-root-{}", std::process::id()));
+        let sub = tmp.join("myrepo").join("windows").join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(tmp.join("myrepo").join(".git")).unwrap();
+        assert_eq!(repo_root_name(&sub).as_deref(), Some("myrepo"));
+        // A worktree's .git is a file, and the worktree wins over the main repo.
+        let wt = tmp.join("myrepo").join(".claude").join("worktrees").join("cvj-ver-doc");
+        std::fs::create_dir_all(wt.join("windows")).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: elsewhere").unwrap();
+        assert_eq!(repo_root_name(&wt.join("windows")).as_deref(), Some("cvj-ver-doc"));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn edits_count_only_the_lines_that_changed() {
+        let edit = serde_json::json!({
+            "tool_name": "Edit",
+            "tool_input": { "old_string": "a
+b
+c", "new_string": "a
+B
+c
+d" }
+        });
+        assert_eq!(edit_line_counts(edit.as_object().unwrap()), Some((2, 1)));
+        let write = serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": { "content": "x
+y
+" }
+        });
+        assert_eq!(edit_line_counts(write.as_object().unwrap()), Some((2, 0)));
+        let bash = serde_json::json!({ "tool_name": "Bash", "tool_input": { "command": "ls" } });
+        assert_eq!(edit_line_counts(bash.as_object().unwrap()), None);
     }
 
     #[test]

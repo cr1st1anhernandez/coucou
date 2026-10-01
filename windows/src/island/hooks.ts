@@ -1,12 +1,16 @@
 // Claude Code hook events → island state.
 // Port of HookServer.processEvent / processPermissionRequest from the macOS app.
 // Difference from macOS: no terminal filter. On Windows the hook fires from any
-// terminal (Windows Terminal, VS Code, PowerShell…) and all of them are handled.
+// terminal (Warp, Windows Terminal, PowerShell…) and all of them are handled.
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State } from "../core/state";
+import { State, type ClaudeSession } from "../core/state";
 import type { Island } from "./island";
+import {
+  appendStep, endSession, isBusy, makeCurrent, recordTool, resetSummary, setNagHandler,
+  setStatus, setStatusById, touchSession,
+} from "./sessions";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -23,16 +27,10 @@ interface HookPayload {
   prompt?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
-}
-
-const PROJECT_ALIASES: Record<string, string> = {
-  "notch-buddy": "Notch Buddy",
-  notchbuddy: "Notch Buddy",
-  notch_buddy: "Notch Buddy",
-};
-
-function aliasProjectName(name: string): string {
-  return PROJECT_ALIASES[name.toLowerCase()] ?? name;
+  /** Added by coucou-hook on PostToolUse for edits, counted before truncation. */
+  coucou_lines?: { added?: number; removed?: number } | null;
+  /** Added by coucou-hook: the repo or worktree folder the session works in. */
+  coucou_root?: string | null;
 }
 
 function lastPathComponent(p: string): string {
@@ -41,22 +39,22 @@ function lastPathComponent(p: string): string {
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
 }
 
-/** frenchStep() — same labels as the macOS app. */
+/** Step labels, in Spanish (the macOS app shows them in French). */
 const TOOL_LABELS: Record<string, string> = {
-  Bash: "Exécute",
-  Read: "Lit",
-  Write: "Écrit",
-  Edit: "Modifie",
-  Glob: "Cherche",
-  Grep: "Recherche",
-  WebSearch: "Recherche web",
-  WebFetch: "Récupère",
-  TodoWrite: "Tâches",
-  Task: "Agent",
-  LS: "Liste",
-  MultiEdit: "Modifie",
+  Bash: "Ejecuta",
+  Read: "Lee",
+  Write: "Escribe",
+  Edit: "Edita",
+  Glob: "Busca",
+  Grep: "Busca en",
+  WebSearch: "Busca en la web",
+  WebFetch: "Descarga",
+  TodoWrite: "Tareas",
+  Task: "Agente",
+  LS: "Lista",
+  MultiEdit: "Edita",
   NotebookEdit: "Notebook",
-  PowerShell: "Exécute",
+  PowerShell: "Ejecuta",
 };
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
@@ -101,24 +99,42 @@ function approvalTarget(tool: string, input: Record<string, unknown>): string {
   return tool;
 }
 
-function upsert(projectName: string, cwd: string) {
-  const t = State.tasks.find((x) => x.id === CLAUDE_ID);
-  if (!t) return;
-  t.name = projectName;
-  if (cwd) t.sessionCwd = cwd;
-}
+/** Claude Code's tool for asking the user a question mid-task. */
+const ASK_TOOL = "AskUserQuestion";
 
-function clearSession() {
-  const t = State.tasks.find((x) => x.id === CLAUDE_ID);
-  if (!t) return;
-  t.steps = [];
-  t.stepIndex = 0;
-  t.name = "VS Code";
-  t.pillBadge = null;
+/** AskUserQuestion carries `questions: [{ question, header, options }]`. */
+function firstQuestion(input: Record<string, unknown>): string {
+  const list = Array.isArray(input.questions) ? (input.questions as Record<string, unknown>[]) : [];
+  const q = list[0]?.question;
+  return typeof q === "string" ? q : "Claude tiene una pregunta";
 }
 
 export function registerHookHandlers(island: Island) {
+  setNagHandler((session) => nag(island, session));
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
+}
+
+/**
+ * A session has been waiting on you for too long: Mochi fidgets and chimes,
+ * and the island comes out of hiding so you notice.
+ */
+function nag(island: Island, session: ClaudeSession) {
+  if (State.paused) return;
+  void Bridge.log(`nag ${session.name} (${session.status})`);
+  // Show the session that needs you, unless an approval card already owns the pill.
+  makeCurrent(session.id);
+  if (State.focusId !== CLAUDE_ID) State.setPillBadge(CLAUDE_ID, "approval");
+  island.nudge();
+  State.notify();
+}
+
+/** Lowers the approval card and hands the pill back. */
+function dropApprovalCard(island: Island) {
+  State.pendingApproval = null;
+  State.isPinned = false;
+  island.dropPin();
+  State.setPillBadge(CLAUDE_ID, null);
+  if (State.view === "approval") island.setView(State.defaultView());
 }
 
 function handleHook(island: Island, payload: HookPayload) {
@@ -132,9 +148,19 @@ function handleHook(island: Island, payload: HookPayload) {
 
   const name = payload.hook_event_name ?? "";
   const cwd = payload.cwd ?? "";
-  const raw = lastPathComponent(cwd);
-  const projectName = aliasProjectName(raw || "Session");
   const focused = State.focusId === CLAUDE_ID;
+
+  if (name === "SessionEnd") {
+    if (payload.session_id) endSession(payload.session_id);
+    State.notify();
+    return;
+  }
+
+  const session = touchSession(payload.session_id || "default", cwd, payload.coucou_root);
+  /** Nothing else is holding the pill: no approval card, no other busy session on it. */
+  const pillFree = () =>
+    !State.pendingApproval &&
+    (State.currentSessionId === session.id || !isBusy(State.currentSession));
 
   /** Alerts force the island open; work events only reveal the compact island. */
   const surface = (view: Parameters<Island["alert"]>[0], isAlert: boolean) => {
@@ -147,88 +173,120 @@ function handleHook(island: Island, payload: HookPayload) {
     }
   };
 
+  /**
+   * Claude asked you something and won't go on until you answer, in the terminal.
+   * Chimes once per question; the reminder takes it from there.
+   */
+  const asks = (question: string) => {
+    const already = session.status === "question";
+    setStatus(session, "question");
+    if (question) appendStep(session, question.slice(0, 120));
+    if (already) return;
+    Sound.play("question");
+    const free = pillFree();
+    if (free) makeCurrent(session.id);
+    if (focused && free) {
+      surface("question", true);
+    } else {
+      State.setPillBadge(CLAUDE_ID, "approval");
+      island.reveal();
+    }
+  };
+
   switch (name) {
     case "SessionStart":
-      upsert(projectName, cwd);
+      setStatus(session, "idle");
       surface("overview", false);
       Sound.play("work");
       break;
 
     case "UserPromptSubmit": {
-      upsert(projectName, cwd);
-      State.updateTask(CLAUDE_ID, "thinking");
+      // You just typed into this one: it's the one to watch.
+      makeCurrent(session.id);
+      resetSummary(session);
+      setStatus(session, "thinking");
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
-      if (asked) State.appendStep(CLAUDE_ID, asked.slice(0, 60));
+      if (asked) appendStep(session, asked.slice(0, 60));
       surface("overview", false);
       break;
     }
 
     case "PreToolUse": {
-      upsert(projectName, cwd);
-      State.updateTask(CLAUDE_ID, "working");
       const tool = payload.tool_name ?? "Tool";
-      State.appendStep(CLAUDE_ID, stepLabel(tool, payload.tool_input ?? {}));
+      if (tool === ASK_TOOL) {
+        asks(firstQuestion(payload.tool_input ?? {}));
+        break;
+      }
+      setStatus(session, "working");
+      appendStep(session, stepLabel(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
     }
 
     case "PostToolUse":
-      State.updateTask(CLAUDE_ID, "working");
+    case "PostToolUseFailure": {
+      const ok = name === "PostToolUse";
+      recordTool(session, payload.tool_name ?? "", payload.tool_input ?? {}, ok, payload.coucou_lines);
+      setStatus(session, "working");
+      if (!ok) appendStep(session, "⚠ falló");
       break;
-
-    case "PostToolUseFailure":
-      State.updateTask(CLAUDE_ID, "working");
-      State.appendStep(CLAUDE_ID, "⚠ failed");
-      break;
+    }
 
     case "Notification": {
       const message = payload.message ?? "";
       const lower = message.toLowerCase();
-      if (lower.includes("rate limit") || lower.includes("limite d")) {
-        State.updateTask(CLAUDE_ID, "ratelimit");
+      if (lower.includes("rate limit") || lower.includes("limite d") || lower.includes("límite")) {
+        setStatus(session, "ratelimit");
         Sound.play("rate");
       } else if (message.endsWith("?")) {
-        State.updateTask(CLAUDE_ID, "question");
-        State.appendStep(CLAUDE_ID, message);
+        asks(message);
       }
+      // "Claude is waiting for your input" is ignored on purpose: it only means
+      // the turn ended, which the Stop event already announced.
       break;
     }
 
-    case "Stop":
-      State.updateTask(CLAUDE_ID, "finished");
-      if (payload.message) State.appendStep(CLAUDE_ID, payload.message.slice(0, 60));
+    case "Stop": {
+      setStatus(session, "finished");
+      if (payload.message) appendStep(session, payload.message.slice(0, 60));
       Sound.play("finish");
-      if (focused) surface("finished", true);
+      // Show the finished card for this session — unless an approval card is up,
+      // or you're watching another session that is still working.
+      const free = pillFree();
+      if (free) makeCurrent(session.id);
+      if (focused && free) surface("finished", true);
       else State.setPillBadge(CLAUDE_ID, "finished");
-      window.setTimeout(() => {
-        State.updateTask(CLAUDE_ID, "idle");
-        State.setPillBadge(CLAUDE_ID, null);
-      }, 5200);
       break;
+    }
 
-    case "StopFailure":
-      State.updateTask(CLAUDE_ID, "error");
+    case "StopFailure": {
+      setStatus(session, "error");
       Sound.play("error");
-      if (focused) surface("error", true);
+      const free = pillFree();
+      if (free) makeCurrent(session.id);
+      if (focused && free) surface("error", true);
       else State.setPillBadge(CLAUDE_ID, "error");
       break;
-
-    case "SessionEnd":
-      State.updateTask(CLAUDE_ID, "idle");
-      clearSession();
-      break;
+    }
 
     case "SubagentStart":
-      State.appendStep(CLAUDE_ID, "+ subagent");
+      appendStep(session, "+ subagente");
       break;
 
     case "SubagentStop":
-      State.appendStep(CLAUDE_ID, "• subagent done");
+      appendStep(session, "• subagente listo");
       break;
 
     case "PermissionRequest": {
       const requestId = payload.request_id ?? "";
+      // A question isn't a permission: Allow/Deny can't answer it. Let the
+      // terminal show it right away and flag it as a question instead.
+      if (payload.tool_name === ASK_TOOL) {
+        if (requestId) void Bridge.approvalDecline(requestId);
+        asks(firstQuestion(payload.tool_input ?? {}));
+        break;
+      }
       // One card, one request. A second one must never quietly replace the first
       // — that would leave a human staring at request B while request A waits for
       // a decision nobody can give. Hand it straight back to the terminal.
@@ -236,20 +294,21 @@ function handleHook(island: Island, payload: HookPayload) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
-      upsert(projectName, cwd);
       if (pendingTimeout != null) window.clearTimeout(pendingTimeout);
       const tool = payload.tool_name ?? "Tool";
       const input = payload.tool_input ?? {};
       State.pendingApproval = {
         requestId,
-        sessionId: payload.session_id ?? "",
+        sessionId: session.id,
         tool,
         command: approvalTarget(tool, input),
       };
+      // The card names the session it answers for.
+      makeCurrent(session.id, true);
       // The relay's short ack window closes in 800 ms; everything below this
       // line is synchronous, so the card really is up by the time it lands.
       if (requestId) void Bridge.approvalAck(requestId);
-      State.updateTask(CLAUDE_ID, "approval");
+      setStatus(session, "approval");
       State.isPinned = true;
       Sound.play("approval");
       if (focused) {
@@ -265,13 +324,11 @@ function handleHook(island: Island, payload: HookPayload) {
       // taken over and the card would be lying.
       pendingTimeout = window.setTimeout(() => {
         pendingTimeout = null;
-        if (!State.pendingApproval) return;
-        State.pendingApproval = null;
-        State.isPinned = false;
-        island.dropPin();
-        State.updateTask(CLAUDE_ID, "working");
-        State.setPillBadge(CLAUDE_ID, null);
-        if (State.view === "approval") island.setView(State.defaultView());
+        const pending = State.pendingApproval;
+        if (!pending) return;
+        dropApprovalCard(island);
+        // Still waiting on you — in the terminal now.
+        setStatusById(pending.sessionId, "approval");
         State.notify();
       }, 110_000);
       break;
@@ -280,5 +337,6 @@ function handleHook(island: Island, payload: HookPayload) {
     default:
       break;
   }
+
   State.notify();
 }

@@ -19,6 +19,39 @@ export interface AgentTask {
   miniEye?: EyeShape | null;
   pillBadge?: PillBadge | null;
   sessionCwd?: string | null;
+  /** The Claude Code session the Warp pill mirrors right now. */
+  sessionId?: string | null;
+}
+
+/** Where a Claude Code session stands, as shown in the Sessions view. */
+export type SessionStatus =
+  | "idle" | "thinking" | "working" | "approval" | "question"
+  | "finished" | "error" | "ratelimit";
+
+/** What a session did since its last prompt — shown when it finishes. */
+export interface SessionSummary {
+  files: string[];
+  added: number;
+  removed: number;
+  tests: "none" | "passed" | "failed";
+}
+
+/** One Claude Code session (one per worktree, usually), keyed by session_id. */
+export interface ClaudeSession {
+  id: string;
+  /** Short name from the worktree folder, e.g. `cvj-ver-documento-da`. */
+  name: string;
+  cwd: string;
+  status: SessionStatus;
+  steps: string[];
+  stepIndex: number;
+  /** Date.now() of the last hook event. */
+  lastEventAt: number;
+  /** Date.now() of the Stop event, so Mochi only celebrates for a moment. */
+  finishedAt: number | null;
+  /** Date.now() since when the session has been waiting on the user. */
+  waitingSince: number | null;
+  summary: SessionSummary;
 }
 
 export interface ApprovalInfo {
@@ -58,7 +91,7 @@ const task = (
 
 /** AgentTask.integrationAgents — same ids, names and colours as macOS. */
 export const INTEGRATION_AGENTS: AgentTask[] = [
-  task("integration_claude", "VS Code", "#F5F6F8", "claudeCode"),
+  task("integration_claude", "Warp", "#F5F6F8", "claudeCode"),
   task("integration_resend", "Resend", "#22C55E", "n8n"),
   task("integration_n8n", "n8n", "#F29B38", "n8n"),
   task("integration_vercel", "Vercel", "#7C5CFF", "n8n"),
@@ -92,6 +125,8 @@ export interface Settings {
   hooksInstalled: boolean;
   /** Claude model used by the chat. */
   model: string;
+  /** Minutes a session may wait on you before Mochi fidgets and chimes. 0 = off. */
+  waitingAlertMinutes: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -106,6 +141,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autostart: false,
   hooksInstalled: false,
   model: "claude-opus-5",
+  waitingAlertMinutes: 2,
 };
 
 type Listener = () => void;
@@ -138,6 +174,10 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
 
+  /** Live Claude Code sessions, most recent activity first. */
+  sessions: ClaudeSession[] = [];
+  currentSessionId: string | null = null;
+
   integrations: Record<string, IntegrationInfo> = {};
 
   lastActivity = performance.now();
@@ -158,6 +198,10 @@ class AppState {
 
   get focusTask(): AgentTask | null {
     return this.tasks.find((t) => t.id === this.focusId) ?? this.tasks[0] ?? null;
+  }
+
+  get currentSession(): ClaudeSession | null {
+    return this.sessions.find((s) => s.id === this.currentSessionId) ?? null;
   }
 
   get effectiveState(): BotStateName {
@@ -199,7 +243,7 @@ class AppState {
     this.notify();
   }
 
-  /** loadIntegrationTasks() — VS Code always on, the rest opt-in (max 4). */
+  /** loadIntegrationTasks() — Warp (Claude Code) always on, the rest opt-in (max 4). */
   loadIntegrationTasks() {
     for (const proto of INTEGRATION_AGENTS) {
       const shouldLoad =

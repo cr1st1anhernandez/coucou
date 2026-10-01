@@ -135,9 +135,9 @@ fn is_new(key: &'static str, id: &str) -> bool {
 
 fn status_error(code: u16, unauthorised_hint: &str) -> String {
     match code {
-        401 => "Invalid API key (401)".into(),
+        401 => "API key inválida (401)".into(),
         403 => unauthorised_hint.into(),
-        _ => format!("API error {code}"),
+        _ => format!("Error de la API {code}"),
     }
 }
 
@@ -180,7 +180,7 @@ async fn poll_stripe(app: AppHandle) {
             emit(&app, IntegrationUpdate {
                 id: "integration_stripe",
                 data: json!({}),
-                error: Some(status_error(code, "Use a secret key (sk_live_… not pk_live_…)")),
+                error: Some(status_error(code, "Usa una clave secreta (sk_live_…, no pk_live_…)")),
                 event: None,
             });
             return;
@@ -189,7 +189,7 @@ async fn poll_stripe(app: AppHandle) {
             emit(&app, IntegrationUpdate {
                 id: "integration_stripe",
                 data: json!({}),
-                error: Some(format!("No connection: {e}")),
+                error: Some(format!("Sin conexión: {e}")),
                 event: None,
             });
             return;
@@ -280,7 +280,7 @@ async fn poll_github(app: AppHandle) {
         emit(&app, IntegrationUpdate {
             id: "integration_github",
             data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Token lacks the needed scope")),
+            error: Some(status_error(response.status().as_u16(), "Al token le faltan permisos")),
             event: None,
         });
         return;
@@ -338,7 +338,7 @@ async fn poll_vercel(app: AppHandle) {
         emit(&app, IntegrationUpdate {
             id: "integration_vercel",
             data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Token lacks access")),
+            error: Some(status_error(response.status().as_u16(), "El token no tiene acceso")),
             event: None,
         });
         return;
@@ -410,7 +410,7 @@ async fn poll_resend(app: AppHandle) {
         emit(&app, IntegrationUpdate {
             id: "integration_resend",
             data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Key lacks access")),
+            error: Some(status_error(response.status().as_u16(), "La clave no tiene acceso")),
             event: None,
         });
         return;
@@ -472,7 +472,7 @@ async fn poll_notion(app: AppHandle) {
         emit(&app, IntegrationUpdate {
             id: "integration_notion",
             data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Integration lacks access")),
+            error: Some(status_error(response.status().as_u16(), "La integración no tiene acceso")),
             event: None,
         });
         return;
@@ -496,7 +496,7 @@ fn parse_notion_page(obj: &Value) -> Option<Value> {
     let id = obj.get("id")?.as_str()?;
     let is_database = obj.get("object").and_then(Value::as_str) == Some("database");
 
-    let mut title = "Untitled".to_string();
+    let mut title = "Sin título".to_string();
     if is_database {
         if let Some(text) = obj
             .get("title")
@@ -559,7 +559,7 @@ async fn poll_calcom(app: AppHandle) {
         emit(&app, IntegrationUpdate {
             id: "integration_calcom",
             data: json!({}),
-            error: Some(status_error(response.status().as_u16(), "Key lacks access")),
+            error: Some(status_error(response.status().as_u16(), "La clave no tiene acceso")),
             event: None,
         });
         return;
@@ -734,7 +734,7 @@ fn n8n_detail(json: &Value, success: bool) -> Option<String> {
         .first()?
         .as_array()?;
     let count = items.len();
-    let header = format!("→ {last_node} · {count} item{}", if count == 1 { "" } else { "s" });
+    let header = format!("→ {last_node} · {count} elemento{}", if count == 1 { "" } else { "s" });
 
     let fields = items
         .first()

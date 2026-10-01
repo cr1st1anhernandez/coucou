@@ -77,7 +77,7 @@ pub async fn send(
     context: Option<ChatContext>,
 ) -> Result<ChatReply, String> {
     let key = secrets::get("anthropic-api-key")
-        .ok_or_else(|| "API key missing. Open settings.".to_string())?;
+        .ok_or_else(|| "Falta la API key. Abre los ajustes.".to_string())?;
 
     let mut content: Vec<Value> = Vec::new();
 
@@ -129,13 +129,13 @@ pub async fn send(
             .get("stop_details")
             .and_then(|d| d.get("explanation"))
             .and_then(Value::as_str)
-            .unwrap_or("Claude declined this one.");
+            .unwrap_or("Claude no quiso responder esta.");
         return Err(why.to_string());
     }
 
     let Some(blocks) = response.get("content").and_then(Value::as_array).cloned() else {
         chat.pop();
-        return Err("Unexpected API response.".into());
+        return Err("Respuesta inesperada de la API.".into());
     };
 
     // Store the whole content — tool_use / tool_result blocks included — so the
@@ -152,7 +152,7 @@ pub async fn send(
         .to_string();
 
     if text.is_empty() {
-        return Err("No response text.".into());
+        return Err("La respuesta vino sin texto.".into());
     }
     Ok(ChatReply { text })
 }
@@ -172,7 +172,7 @@ async fn call(key: &str, body: &Value) -> Result<Value, String> {
         .json(body)
         .send()
         .await
-        .map_err(|e| format!("Network error: {e}"))?;
+        .map_err(|e| format!("Error de red: {e}"))?;
 
     let status = response.status();
     let text = response.text().await.map_err(|e| e.to_string())?;
@@ -189,7 +189,7 @@ async fn call(key: &str, body: &Value) -> Result<Value, String> {
             .unwrap_or_else(|| text.chars().take(200).collect());
         return Err(format!("Claude API {status}: {detail}"));
     }
-    serde_json::from_str(&text).map_err(|e| format!("Bad API response: {e}"))
+    serde_json::from_str(&text).map_err(|e| format!("Respuesta de la API inválida: {e}"))
 }
 
 /// PDF → document block, image → image block, text/code → inline text.

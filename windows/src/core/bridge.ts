@@ -50,11 +50,8 @@ export const Bridge = {
 
   openUrl: (url: string) => call<void>("open_url", { url }),
 
-  /** "Open terminal" → brings Warp to the front; VS Code, then Explorer, without it. */
+  /** "Open terminal" → brings Warp to the front; Explorer when Warp isn't installed. */
   openTerminal: (path: string | null) => call<boolean>("open_terminal", { path }),
-
-  /** Opens the folder in VS Code when `code` is on PATH. */
-  openInVSCode: (path: string | null) => call<boolean>("open_in_vscode", { path }),
 
   quit: () => call<void>("quit_app"),
 

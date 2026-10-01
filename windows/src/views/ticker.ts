@@ -91,6 +91,13 @@ export class Ticker {
     place(this.c, ROW_H * 2, 0, 0);
   }
 
+  /** Another session took the pill: its steps are a different story, start over. */
+  reset() {
+    this.queue = [];
+    this.startMs = null;
+    this.displayIndex = -1;
+  }
+
   get animating(): boolean {
     return this.startMs != null || this.queue.length > 0;
   }

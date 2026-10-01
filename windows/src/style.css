@@ -1358,3 +1358,134 @@ input[type="range"]::-webkit-slider-thumb {
 .int-card.detail {
   padding-top: 8px;
 }
+
+/* ── Claude Code sessions ───────────────────────────────────────────────── */
+
+.tab {
+  position: relative;
+}
+
+.tab-count {
+  position: absolute;
+  top: -2px;
+  right: -1px;
+  min-width: 12px;
+  height: 12px;
+  padding: 0 3px;
+  border-radius: 6px;
+  font: 600 8.5px/12px var(--font);
+  text-align: center;
+  /* Only ever counts pending permissions and questions, so it is always amber. */
+  background: var(--amber);
+  color: #0b0c0e;
+}
+
+.tab-count:empty {
+  display: none;
+}
+
+.who .more-sessions {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 1px 6px;
+  font: 600 10.5px var(--font);
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.09);
+  cursor: default;
+}
+
+.who .more-sessions:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.who .more-sessions.alert {
+  background: rgba(245, 165, 36, 0.25);
+  color: var(--amber);
+}
+
+.title.one-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.summary {
+  font: 400 12px var(--font);
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sessions-body {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  padding: 8px 12px 8px 92px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 100%;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  flex: 0 0 26px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  cursor: default;
+}
+
+.session-row:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.session-row.on {
+  background: var(--tab-on);
+}
+
+/* No looping animation here: anything that loops keeps the island awake. */
+.session-row.waiting .session-status {
+  font-weight: 700;
+}
+
+.session-name {
+  flex: 0 0 auto;
+  max-width: 170px;
+  font: 600 12px var(--mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-status {
+  flex: 0 0 auto;
+  font: 500 11px var(--font);
+  white-space: nowrap;
+}
+
+.session-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 400 11px var(--font);
+  color: var(--dim-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

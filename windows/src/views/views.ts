@@ -11,6 +11,7 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
+import { STATUS_COLORS, STATUS_LABELS, isWaiting, summaryText, waitingSinceLabel } from "../island/sessions";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -26,6 +27,8 @@ export interface ViewActions {
   setAutoClose(seconds: number): void;
   openSettingsWindow(): void;
   blip(): void;
+  /** Puts a Claude Code session on the Warp pill and shows it. */
+  selectSession(id: string): void;
 }
 
 export interface ViewHost {
@@ -78,12 +81,19 @@ function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElem
 // ── Header ────────────────────────────────────────────────────────────────────
 
 export function buildHeader(actions: ViewActions): ViewHost {
-  const tabHome = h("button", { class: "tab", title: "Overview", onclick: () => go("overview") }, svg(ICONS.house, 13));
-  const tabChat = h("button", { class: "tab", title: "Ask", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
-  const tabDrop = h("button", { class: "tab", title: "Drop", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabHome = h("button", { class: "tab", title: "Inicio", onclick: () => go("overview") }, svg(ICONS.house, 13));
+  const tabChat = h("button", { class: "tab", title: "Preguntar", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
+  const tabDrop = h("button", { class: "tab", title: "Soltar archivo", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const sessionCount = h("span", { class: "tab-count" });
+  const tabSessions = h(
+    "button",
+    { class: "tab", title: "Sesiones", onclick: () => go("sessions") },
+    svg(ICONS.stack, 13),
+    sessionCount,
+  );
 
-  const gearBtn = h("button", { title: "Settings", onclick: () => go("settings") }, svg(ICONS.gear, 14));
-  const soundBtn = h("button", { title: "Mute", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
+  const gearBtn = h("button", { title: "Ajustes", onclick: () => go("settings") }, svg(ICONS.gear, 14));
+  const soundBtn = h("button", { title: "Silenciar", onclick: () => actions.toggleSound() }, svg(ICONS.speakerOn, 14));
 
   function go(v: IslandViewName) {
     actions.blip();
@@ -93,7 +103,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabChat, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabDrop),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -104,6 +114,12 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabSessions.classList.toggle("on", v === "sessions");
+      // Only what needs you: a permission or a question. It drops as you answer.
+      const pending = State.sessions.filter(isWaiting).length;
+      sessionCount.textContent = pending > 0 ? String(pending) : "";
+      const open = State.sessions.length;
+      tabSessions.title = open === 1 ? "Sesiones · 1 abierta" : `Sesiones · ${open} abiertas`;
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
       gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
@@ -123,7 +139,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   const leftBody = h("div", { class: "left-body" });
   const jump = h(
     "button",
-    { class: "icon-btn jump", title: "Open", onclick: () => actions.openTarget() },
+    { class: "icon-btn jump", title: "Abrir", onclick: () => actions.openTarget() },
     svg(ICONS.arrowUpRight, 8),
   );
   const left = card(null, leftBody, jump);
@@ -140,6 +156,7 @@ function buildOverview(actions: ViewActions): ViewHost {
   let lastFocus: string | null = null;
   let mode: "ticker" | "card" | null = null;
   let cardKey = "";
+  let tickerSession: string | null = null;
 
   const hooks: IntegrationCardHooks = {
     get detailOpen() {
@@ -172,10 +189,11 @@ function buildOverview(actions: ViewActions): ViewHost {
         mode = null;
       }
 
-      // VS Code with a live Claude Code session keeps the ticker; every other
+      // The Warp pill with a live Claude Code session keeps the ticker; every other
       // pill shows its own card, exactly like IntegrationCardView.
       const sessionActive =
-        task?.id === "integration_claude" && (task.state !== "idle" || task.steps.length > 0);
+        task?.id === "integration_claude" &&
+        (task.state !== "idle" || task.steps.length > 0 || State.sessions.length > 0);
 
       if (task && sessionActive) {
         if (mode !== "ticker") {
@@ -184,12 +202,26 @@ function buildOverview(actions: ViewActions): ViewHost {
           mode = "ticker";
           cardKey = "";
         }
+        if ((task.sessionId ?? null) !== tickerSession) {
+          tickerSession = task.sessionId ?? null;
+          ticker.reset();
+        }
         clear(who);
         who.append(
           dot(task.color, 7),
           h("span", { class: "name", text: task.name }),
           h("span", { class: "tool", text: task.source === "claudeCode" ? "Claude Code" : "n8n" }),
         );
+        const others = State.sessions.length - 1;
+        if (task.id === "integration_claude" && others > 0) {
+          const waiting = State.sessions.some((s) => s.id !== task.sessionId && isWaiting(s));
+          who.append(h("button", {
+            class: waiting ? "more-sessions alert" : "more-sessions",
+            title: "Ver todas las sesiones",
+            text: `+${others}`,
+            onclick: () => actions.setView("sessions"),
+          }));
+        }
         if (task.steps.length > 1) {
           who.append(h("span", {
             class: "count",
@@ -227,7 +259,7 @@ function buildOverview(actions: ViewActions): ViewHost {
 }
 
 function buildPill(task: AgentTask, actions: ViewActions): HTMLElement {
-  const label = task.id === "integration_claude" ? "VS Code" : task.name;
+  const label = task.name;
   const canvas = createMiniBot(task, 24);
   const pill = h(
     "div",
@@ -277,11 +309,11 @@ function buildEmpty(actions: ViewActions): ViewHost {
     h(
       "div",
       { style: "display:flex;flex-direction:column;gap:5px" },
-      h("div", { class: "title", text: "Nothing running right now." }),
-      h("div", { class: "sub", text: "Drop a file or window, or ask me anything." }),
+      h("div", { class: "title", text: "No hay nada corriendo ahorita." }),
+      h("div", { class: "sub", text: "Suelta un archivo o pregúntame lo que quieras." }),
     ),
     h("div", { class: "grow" }),
-    btn("Ask Claude", "primary", () => actions.setView("prompt")),
+    btn("Preguntar a Claude", "primary", () => actions.setView("prompt")),
   );
   return { el: h("div", { class: "view" }, card(null, body)), sync() {} };
 }
@@ -298,7 +330,7 @@ function buildApproval(actions: ViewActions): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "needs permission"));
+      who.append(agentWho(State.focusTask, "necesita permiso"));
       // The whole point of approving here rather than in the terminal: this line
       // is the command, the file path or the URL being authorised, not just the
       // name of the tool asking.
@@ -310,8 +342,8 @@ function buildApproval(actions: ViewActions): ViewHost {
       rowKey = "built";
       clear(row);
       row.append(
-        btn("Deny", "secondary", () => actions.decide("deny"), "N"),
-        btn("Allow", "primary", () => actions.decide("allow"), "Y"),
+        btn("Denegar", "secondary", () => actions.decide("deny"), "N"),
+        btn("Permitir", "primary", () => actions.decide("allow"), "S"),
       );
     },
   };
@@ -328,11 +360,11 @@ function buildQuestion(): ViewHost {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code is asking a question"));
+      who.append(agentWho(State.focusTask, "Claude Code te hace una pregunta"));
       const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude needs an answer.";
+      title.textContent = task?.steps.at(-1) ?? "Claude necesita una respuesta.";
       clear(row);
-      row.append(h("div", { class: "sub", text: "Answer in your terminal — Coucou can't reply for you yet." }));
+      row.append(h("div", { class: "sub", text: "Responde en tu terminal — Coucou todavía no puede contestar por ti." }));
     },
   };
 }
@@ -341,11 +373,11 @@ function buildQuestion(): ViewHost {
 
 function buildError(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title", text: "Workflow stopped." });
+  const title = h("div", { class: "title", text: "El workflow se detuvo." });
   const detail = h("div", { class: "detail" });
   const row = h("div", { class: "actions" },
-    btn("Retry", "primary", () => actions.setView(State.defaultView())),
-    btn("Open in n8n", "secondary", () => actions.openUrl("")),
+    btn("Reintentar", "primary", () => actions.setView(State.defaultView())),
+    btn("Abrir en n8n", "secondary", () => actions.openUrl("")),
   );
   const el = h("div", { class: "view" }, card("red", stack(116, 16, who, title, detail, row)));
   return {
@@ -354,8 +386,8 @@ function buildError(actions: ViewActions): ViewHost {
       const task = State.focusTask;
       clear(who);
       who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "Workflow stopped." : "Session stopped on an error.";
-      detail.textContent = task?.steps.at(-1) ?? "No detail available.";
+      title.textContent = task?.source === "n8n" ? "El workflow se detuvo." : "La sesión se detuvo por un error.";
+      detail.textContent = task?.steps.at(-1) ?? "Sin detalles.";
     },
   };
 }
@@ -364,18 +396,21 @@ function buildError(actions: ViewActions): ViewHost {
 
 function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title" });
+  const title = h("div", { class: "title one-line" });
+  const summary = h("div", { class: "summary" });
   const row = h("div", { class: "actions" },
-    btn("Open terminal", "primary", () => actions.openTerminal()),
+    btn("Abrir terminal", "primary", () => actions.openTerminal()),
     btn("OK", "secondary", () => actions.collapse()),
   );
-  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, row)));
+  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, summary, row)));
   return {
     el,
     sync() {
       clear(who);
-      who.append(agentWho(State.focusTask, "Claude Code finished"));
-      title.textContent = State.focusTask?.steps.at(-1) ?? "Session finished";
+      who.append(agentWho(State.focusTask, "Claude Code terminó"));
+      title.textContent = State.focusTask?.steps.at(-1) ?? "Sesión terminada";
+      const session = State.currentSession;
+      summary.textContent = session ? summaryText(session.summary) : "";
     },
   };
 }
@@ -386,8 +421,8 @@ function buildConfused(): ViewHost {
   const body = h(
     "div",
     { class: "stack", style: "padding:0 18px 0 128px" },
-    h("div", { class: "title", text: "Too many hits at once." }),
-    h("div", { class: "sub", text: "Give me a sec — back to work in three seconds." }),
+    h("div", { class: "title", text: "Demasiados golpes de una vez." }),
+    h("div", { class: "sub", text: "Dame un segundo — vuelvo al trabajo en tres segundos." }),
   );
   return { el: h("div", { class: "view" }, card("pink", body)), sync() {} };
 }
@@ -407,6 +442,8 @@ function buildNote(): ViewHost {
 
 // ── In-island settings ────────────────────────────────────────────────────────
 
+const AUTO_CLOSE_CHOICES = [5, 10, 15, 30];
+
 function buildSettings(actions: ViewActions): ViewHost {
   const soundSwitch = h("button", { class: "switch", onclick: () => actions.toggleSound() });
   const volume = h("input", {
@@ -414,8 +451,8 @@ function buildSettings(actions: ViewActions): ViewHost {
     oninput: (e: Event) => actions.setVolume(Number((e.target as HTMLInputElement).value)),
   }) as HTMLInputElement;
   const autoLabel = h("span", {});
-  const segButtons = [10, 15, 30].map((s) =>
-    h("button", { onclick: () => actions.setAutoClose(s) }, `${s}s`),
+  const segButtons = AUTO_CLOSE_CHOICES.map((s) =>
+    h("button", { onclick: () => actions.setAutoClose(s) }, `${s} s`),
   );
   const claudeBadge = h("span", { class: "status-badge" });
   const apiBadge = h("span", { class: "status-badge" });
@@ -423,7 +460,7 @@ function buildSettings(actions: ViewActions): ViewHost {
   const rows = h(
     "div",
     { class: "settings-rows" },
-    h("div", { class: "settings-row" }, soundSwitch, h("span", { text: "Sound" }), volume),
+    h("div", { class: "settings-row" }, soundSwitch, h("span", { text: "Sonido" }), volume),
     h(
       "div",
       { class: "settings-row" },
@@ -440,7 +477,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       h("button", {
         class: "link-btn",
         style: "color:#8e939c;font-size:11.5px",
-        text: "Settings…",
+        text: "Ajustes…",
         onclick: () => actions.openSettingsWindow(),
       }),
     ),
@@ -456,8 +493,8 @@ function buildSettings(actions: ViewActions): ViewHost {
       soundSwitch.classList.toggle("on", s.soundEnabled);
       volume.value = String(s.soundVolume);
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
-      autoLabel.textContent = `Auto-close · ${Math.round(s.autoCloseInterval)}s`;
-      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === [10, 15, 30][i]));
+      autoLabel.textContent = `Cierre automático · ${Math.round(s.autoCloseInterval)} s`;
+      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === AUTO_CLOSE_CHOICES[i]));
       clear(claudeBadge);
       claudeBadge.append(
         dot(s.hooksInstalled ? "#22C55E" : "#F4505E", 6),
@@ -465,6 +502,63 @@ function buildSettings(actions: ViewActions): ViewHost {
       );
       clear(apiBadge);
       apiBadge.append(dot("#F4505E", 6), h("span", { text: "API" }));
+    },
+  };
+}
+
+// ── Sessions ──────────────────────────────────────────────────────────────────
+
+/** Every live Claude Code session: name, what it's doing, and whether it needs you. */
+function buildSessions(actions: ViewActions): ViewHost {
+  const list = h("div", { class: "session-list" });
+  const empty = h("div", { class: "sub", text: "No hay sesiones de Claude Code abiertas." });
+  const body = h("div", { class: "sessions-body" }, list);
+  const el = h("div", { class: "view" }, card(null, body));
+  let key = "";
+
+  function row(id: string): HTMLElement | null {
+    const s = State.sessions.find((x) => x.id === id);
+    if (!s) return null;
+    const color = STATUS_COLORS[s.status];
+    const status = isWaiting(s)
+      ? `${STATUS_LABELS[s.status]} · ${waitingSinceLabel(s)}`
+      : STATUS_LABELS[s.status];
+    const ended = s.status === "finished" || s.status === "error";
+    const detail = (ended && summaryText(s.summary)) || (s.steps.at(-1) ?? "");
+    const r = h(
+      "button",
+      {
+        class: s.id === State.currentSessionId ? "session-row on" : "session-row",
+        title: s.cwd,
+        onclick: () => actions.selectSession(s.id),
+      },
+      dot(color, 7),
+      h("span", { class: "session-name", text: s.name }),
+      h("span", { class: "session-status", style: `color:${color}`, text: status }),
+      h("span", { class: "session-detail", text: detail }),
+    );
+    if (isWaiting(s)) r.classList.add("waiting");
+    return r;
+  }
+
+  return {
+    el,
+    sync() {
+      const next = State.sessions
+        .map((s) => [s.id, s.name, s.status, s.steps.at(-1), s.waitingSince,
+          summaryText(s.summary), s.id === State.currentSessionId].join("~"))
+        .join("|");
+      if (next === key) return;
+      key = next;
+      clear(list);
+      if (State.sessions.length === 0) {
+        list.append(empty);
+        return;
+      }
+      for (const s of State.sessions) {
+        const r = row(s.id);
+        if (r) list.append(r);
+      }
     },
   };
 }
@@ -497,13 +591,14 @@ export function buildViews(
   map.set("confused", buildConfused());
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
+  map.set("sessions", buildSessions(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("upload", buildUpload());
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));
   // Not in the Windows v1: sending a file by email, window attach + web result.
-  map.set("mail", buildPlaceholder("Sending by email isn't in this version.", ""));
-  map.set("searching", buildPlaceholder("Claude is searching…", ""));
-  map.set("result", buildPlaceholder("Result", ""));
+  map.set("mail", buildPlaceholder("Enviar por correo no está en esta versión.", ""));
+  map.set("searching", buildPlaceholder("Claude está buscando…", ""));
+  map.set("result", buildPlaceholder("Resultado", ""));
   return map;
 }
