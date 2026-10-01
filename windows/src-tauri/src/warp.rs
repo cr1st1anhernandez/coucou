@@ -33,12 +33,18 @@ pub fn focus_or_launch(path: Option<&str>) -> bool {
     cmd.spawn().is_ok()
 }
 
-/// The default per-user install, then %PATH%.
+/// The default per-user install, then the machine-wide one, then %PATH%.
 fn find_exe() -> Option<PathBuf> {
-    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
-        let exe = PathBuf::from(local).join(r"Programs\Warp\warp.exe");
-        if exe.is_file() {
-            return Some(exe);
+    let installs = [
+        ("LOCALAPPDATA", r"Programs\Warp\warp.exe"),
+        ("ProgramFiles", r"Warp\warp.exe"),
+    ];
+    for (var, rel) in installs {
+        if let Some(base) = std::env::var_os(var) {
+            let exe = PathBuf::from(base).join(rel);
+            if exe.is_file() {
+                return Some(exe);
+            }
         }
     }
     crate::find_on_path("warp")
