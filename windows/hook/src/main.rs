@@ -170,6 +170,17 @@ fn read_event() -> Option<(String, String)> {
         }
     }
 
+    // Counted before truncation: the island only ever sees cut-down strings, and
+    // a long Write would otherwise report a fraction of its lines.
+    if event == "PostToolUse" {
+        if let Some((added, removed)) = edit_line_counts(map) {
+            map.insert(
+                "coucou_lines".into(),
+                serde_json::json!({ "added": added, "removed": removed }),
+            );
+        }
+    }
+
     truncate_strings(&mut payload);
 
     let mut line = payload.to_string();
@@ -178,6 +189,48 @@ fn read_event() -> Option<(String, String)> {
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
+/// Lines an edit added and removed, for the island's end-of-turn summary.
+/// None for anything that isn't a file edit.
+fn edit_line_counts(map: &serde_json::Map<String, serde_json::Value>) -> Option<(usize, usize)> {
+    use serde_json::Value;
+    let tool = map.get("tool_name")?.as_str()?;
+    let input = map.get("tool_input")?;
+    let text = |v: &Value, key: &str| v.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+    let pairs: Vec<(String, String)> = match tool {
+        "Write" => vec![(String::new(), text(input, "content"))],
+        "Edit" => vec![(text(input, "old_string"), text(input, "new_string"))],
+        "NotebookEdit" => vec![(String::new(), text(input, "new_source"))],
+        "MultiEdit" => input
+            .get("edits")?
+            .as_array()?
+            .iter()
+            .map(|e| (text(e, "old_string"), text(e, "new_string")))
+            .collect(),
+        _ => return None,
+    };
+    Some(pairs.iter().fold((0, 0), |(a, r), (old, new)| {
+        let (da, dr) = line_diff(old, new);
+        (a + da, r + dr)
+    }))
+}
+
+/// A multiset line diff: a line present on both sides cancels out, so the
+/// context an Edit carries around its change isn't counted as churn.
+fn line_diff(old: &str, new: &str) -> (usize, usize) {
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for line in old.lines() {
+        *counts.entry(line).or_default() += 1;
+    }
+    let mut added = 0;
+    for line in new.lines() {
+        match counts.get_mut(line) {
+            Some(c) if *c > 0 => *c -= 1,
+            _ => added += 1,
+        }
+    }
+    (added, counts.values().sum())
+}
+
 fn truncate_strings(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::String(s) => {
@@ -252,6 +305,29 @@ mod tests {
         assert!(decision_json("maybe").is_none());
         // The shape the app used to send must not be mistaken for a decision.
         assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+    }
+
+    #[test]
+    fn edits_count_only_the_lines_that_changed() {
+        let edit = serde_json::json!({
+            "tool_name": "Edit",
+            "tool_input": { "old_string": "a
+b
+c", "new_string": "a
+B
+c
+d" }
+        });
+        assert_eq!(edit_line_counts(edit.as_object().unwrap()), Some((2, 1)));
+        let write = serde_json::json!({
+            "tool_name": "Write",
+            "tool_input": { "content": "x
+y
+" }
+        });
+        assert_eq!(edit_line_counts(write.as_object().unwrap()), Some((2, 0)));
+        let bash = serde_json::json!({ "tool_name": "Bash", "tool_input": { "command": "ls" } });
+        assert_eq!(edit_line_counts(bash.as_object().unwrap()), None);
     }
 
     #[test]
