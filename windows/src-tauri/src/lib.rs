@@ -10,6 +10,7 @@ mod pipe;
 mod secrets;
 mod settings;
 mod tray;
+mod warp;
 mod win_user;
 
 use std::os::windows::process::CommandExt;
@@ -132,8 +133,15 @@ fn open_url(url: String) {
         .spawn();
 }
 
-/// "Open terminal" opens the working folder in VS Code when `code` is on PATH,
-/// and falls back to Explorer otherwise.
+/// "Open terminal" brings the open Warp window to the front (or launches Warp),
+/// and falls back to VS Code, then Explorer, when Warp isn't installed.
+#[tauri::command]
+fn open_terminal(path: Option<String>) -> bool {
+    warp::focus_or_launch(path.as_deref()) || open_in_vscode(path)
+}
+
+/// Opens the working folder in VS Code when `code` is on PATH, and falls back
+/// to Explorer otherwise.
 #[tauri::command]
 fn open_in_vscode(path: Option<String>) -> bool {
     // No `cmd /C` anywhere near this. The path is a project folder chosen by
@@ -158,7 +166,7 @@ fn open_in_vscode(path: Option<String>) -> bool {
 /// Our own `where`: walks %PATH% against %PATHEXT%, no shell involved.
 /// Rust quotes arguments correctly for `.cmd`/`.bat` targets since 1.77, so
 /// spawning `code.cmd` directly is safe.
-fn find_on_path(stem: &str) -> Option<std::path::PathBuf> {
+pub(crate) fn find_on_path(stem: &str) -> Option<std::path::PathBuf> {
     let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
     let dirs = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&dirs) {
@@ -388,6 +396,7 @@ pub fn run() {
             focus_window,
             reposition,
             open_url,
+            open_terminal,
             open_in_vscode,
             quit_app,
             hooks_status,
