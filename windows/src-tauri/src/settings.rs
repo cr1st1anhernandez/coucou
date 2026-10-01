@@ -4,8 +4,11 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// `serde(default)` on the whole struct: a settings.json written by an older
+/// build (one field fewer) must load with that field defaulted, not be thrown
+/// away wholesale — that silently reset every preference after an update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct Settings {
     pub sound_enabled: bool,
     pub sound_volume: f64,
@@ -17,8 +20,6 @@ pub struct Settings {
     pub autostart: bool,
     pub hooks_installed: bool,
     /// Claude model used by the chat. Changeable in the settings window.
-    /// Defaulted explicitly so a settings.json written by an older build still loads.
-    #[serde(default = "default_model")]
     pub model: String,
 }
 
@@ -83,5 +84,10 @@ pub fn save(settings: &Settings) -> std::io::Result<()> {
     std::fs::create_dir_all(&dir)?;
     let json = serde_json::to_vec_pretty(settings)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
-    std::fs::write(settings_path(), json)
+    // Temp file + rename: a PC switched off mid-write leaves the old file intact
+    // instead of a truncated one that would load as defaults.
+    let path = settings_path();
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, json)?;
+    std::fs::rename(&temp, &path)
 }

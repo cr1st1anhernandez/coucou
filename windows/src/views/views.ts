@@ -407,6 +407,8 @@ function buildNote(): ViewHost {
 
 // ── In-island settings ────────────────────────────────────────────────────────
 
+const AUTO_CLOSE_CHOICES = [5, 10, 15, 30];
+
 function buildSettings(actions: ViewActions): ViewHost {
   const soundSwitch = h("button", { class: "switch", onclick: () => actions.toggleSound() });
   const volume = h("input", {
@@ -414,7 +416,7 @@ function buildSettings(actions: ViewActions): ViewHost {
     oninput: (e: Event) => actions.setVolume(Number((e.target as HTMLInputElement).value)),
   }) as HTMLInputElement;
   const autoLabel = h("span", {});
-  const segButtons = [10, 15, 30].map((s) =>
+  const segButtons = AUTO_CLOSE_CHOICES.map((s) =>
     h("button", { onclick: () => actions.setAutoClose(s) }, `${s}s`),
   );
   const claudeBadge = h("span", { class: "status-badge" });
@@ -457,7 +459,7 @@ function buildSettings(actions: ViewActions): ViewHost {
       volume.value = String(s.soundVolume);
       volume.style.opacity = s.soundEnabled ? "1" : "0.4";
       autoLabel.textContent = `Auto-close · ${Math.round(s.autoCloseInterval)}s`;
-      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === [10, 15, 30][i]));
+      segButtons.forEach((b, i) => b.classList.toggle("on", s.autoCloseInterval === AUTO_CLOSE_CHOICES[i]));
       clear(claudeBadge);
       claudeBadge.append(
         dot(s.hooksInstalled ? "#22C55E" : "#F4505E", 6),
