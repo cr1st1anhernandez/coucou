@@ -170,6 +170,16 @@ fn read_event() -> Option<(String, String)> {
         }
     }
 
+    // The repo (or worktree) the session works in, whatever subfolder it is in
+    // right now: the island names the session after it.
+    let root = map
+        .get("cwd")
+        .and_then(|v| v.as_str())
+        .and_then(|cwd| repo_root_name(std::path::Path::new(cwd)));
+    if let Some(root) = root {
+        map.insert("coucou_root".into(), serde_json::Value::String(root));
+    }
+
     // Counted before truncation: the island only ever sees cut-down strings, and
     // a long Write would otherwise report a fraction of its lines.
     if event == "PostToolUse" {
@@ -189,6 +199,15 @@ fn read_event() -> Option<(String, String)> {
 }
 
 /// Caps every string in the payload. A single Write can carry a whole file.
+/// Name of the nearest folder holding a `.git` — a directory in a repo, a file
+/// in a worktree, so a worktree is named after itself. A handful of stats at most.
+fn repo_root_name(cwd: &std::path::Path) -> Option<String> {
+    cwd.ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .and_then(|dir| dir.file_name())
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
 /// Lines an edit added and removed, for the island's end-of-turn summary.
 /// None for anything that isn't a file edit.
 fn edit_line_counts(map: &serde_json::Map<String, serde_json::Value>) -> Option<(usize, usize)> {
@@ -305,6 +324,21 @@ mod tests {
         assert!(decision_json("maybe").is_none());
         // The shape the app used to send must not be mistaken for a decision.
         assert!(decision_json(r#"{"permissionDecision":"allow"}"#).is_none());
+    }
+
+    #[test]
+    fn sessions_are_named_after_the_repo_root() {
+        let tmp = std::env::temp_dir().join(format!("coucou-root-{}", std::process::id()));
+        let sub = tmp.join("myrepo").join("windows").join("src");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(tmp.join("myrepo").join(".git")).unwrap();
+        assert_eq!(repo_root_name(&sub).as_deref(), Some("myrepo"));
+        // A worktree's .git is a file, and the worktree wins over the main repo.
+        let wt = tmp.join("myrepo").join(".claude").join("worktrees").join("cvj-ver-doc");
+        std::fs::create_dir_all(wt.join("windows")).unwrap();
+        std::fs::write(wt.join(".git"), "gitdir: elsewhere").unwrap();
+        assert_eq!(repo_root_name(&wt.join("windows")).as_deref(), Some("cvj-ver-doc"));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]
