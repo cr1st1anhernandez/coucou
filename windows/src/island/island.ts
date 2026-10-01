@@ -113,7 +113,7 @@ export class Island {
       },
       openTerminal: () => {
         const cwd = State.focusTask?.sessionCwd ?? null;
-        void Bridge.openInVSCode(cwd);
+        void Bridge.openTerminal(cwd);
       },
       // The ↗ button — same targets as openAgentTarget() on macOS.
       openTarget: () => {
@@ -127,7 +127,7 @@ export class Island {
           integration_notion: "https://notion.so",
           integration_calcom: "https://app.cal.com/bookings",
         };
-        if (task.id === "integration_claude") void Bridge.openInVSCode(task.sessionCwd ?? null);
+        if (task.id === "integration_claude") void Bridge.openTerminal(task.sessionCwd ?? null);
         else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
