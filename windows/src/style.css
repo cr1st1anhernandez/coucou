@@ -1375,17 +1375,13 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 6px;
   font: 600 8.5px/12px var(--font);
   text-align: center;
-  color: var(--ink);
-  background: #2b2e35;
+  /* Only ever counts pending permissions and questions, so it is always amber. */
+  background: var(--amber);
+  color: #0b0c0e;
 }
 
 .tab-count:empty {
   display: none;
-}
-
-.tab-count.alert {
-  background: var(--amber);
-  color: #0b0c0e;
 }
 
 .who .more-sessions {

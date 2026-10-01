@@ -25,7 +25,7 @@ export interface AgentTask {
 
 /** Where a Claude Code session stands, as shown in the Sessions view. */
 export type SessionStatus =
-  | "idle" | "thinking" | "working" | "approval" | "question" | "waiting"
+  | "idle" | "thinking" | "working" | "approval" | "question"
   | "finished" | "error" | "ratelimit";
 
 /** What a session did since its last prompt — shown when it finishes. */

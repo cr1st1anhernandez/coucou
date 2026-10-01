@@ -23,7 +23,8 @@ const MAX_NAME = 24;
 /** Reminders per wait, so a session you deliberately left doesn't nag forever. */
 const MAX_NAGS = 3;
 
-const WAITING: ReadonlySet<SessionStatus> = new Set(["approval", "question", "waiting"]);
+/** Blocked until you act: a permission to grant or a question to answer. */
+const WAITING: ReadonlySet<SessionStatus> = new Set(["approval", "question"]);
 
 const nagTimers = new Map<string, number>();
 const nagCounts = new Map<string, number>();
@@ -74,14 +75,16 @@ function emptySummary(): SessionSummary {
 }
 
 /** Finds the session behind an event, creating it on first sight. */
-export function touchSession(id: string, cwd: string): ClaudeSession {
+export function touchSession(id: string, cwd: string, root?: string | null): ClaudeSession {
   const now = Date.now();
   pruneStale(now);
   let s = State.sessions.find((x) => x.id === id);
   if (!s) {
     s = {
       id,
-      name: uniqueName(sessionBaseName(cwd)),
+      // The relay names the repo or worktree; the folder heuristic is for an
+      // older relay, or a session outside any git repo.
+      name: uniqueName(root || sessionBaseName(cwd)),
       cwd,
       status: "idle",
       steps: [],
@@ -182,8 +185,6 @@ function botState(s: ClaudeSession): BotStateName {
   switch (s.status) {
     case "finished":
       return s.finishedAt != null && Date.now() - s.finishedAt < FINISHED_POSE_MS ? "finished" : "idle";
-    case "waiting":
-      return "question";
     default:
       return s.status;
   }
@@ -227,9 +228,7 @@ function scheduleNag(s: ClaudeSession) {
   const minutes = State.settings.waitingAlertMinutes;
   if (!(minutes > 0) || s.waitingSince == null) return;
   const count = nagCounts.get(s.id) ?? 0;
-  // "Waiting for your input" after a finished turn gets one reminder; a pending
-  // permission or a question blocks the work, so those get a few.
-  if (count >= (s.status === "waiting" ? 1 : MAX_NAGS)) return;
+  if (count >= MAX_NAGS) return;
   const due = s.waitingSince + minutes * 60_000 * (count + 1);
   nagTimers.set(
     s.id,
@@ -251,11 +250,14 @@ export function rescheduleNags() {
   }
 }
 
-/** "hace 3 min" — how long a session has been waiting. */
-export function waitedFor(s: ClaudeSession): string {
+/**
+ * "desde 9:41" — when the session started waiting. A clock time never goes
+ * stale, so nothing has to tick to keep it true.
+ */
+export function waitingSinceLabel(s: ClaudeSession): string {
   if (s.waitingSince == null) return "";
-  const min = Math.floor((Date.now() - s.waitingSince) / 60_000);
-  return min < 1 ? "hace un momento" : `hace ${min} min`;
+  const time = new Date(s.waitingSince).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" });
+  return `desde ${time}`;
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────
@@ -338,18 +340,16 @@ export function recordTool(
   }
 }
 
-/** "3 archivos · +120 −14 · tests ✓" */
+/** "3 archivos · +120 −14 · tests ✓" — empty for a turn that changed nothing. */
 export function summaryText(summary: SessionSummary): string {
   const parts: string[] = [];
   const n = summary.files.length;
-  if (n === 0) parts.push("Sin cambios en archivos");
-  else {
+  if (n > 0) {
     parts.push(n === 1 ? "1 archivo" : `${n} archivos`);
     parts.push(`+${summary.added} −${summary.removed}`);
   }
   if (summary.tests === "passed") parts.push("tests ✓");
   else if (summary.tests === "failed") parts.push("tests ✗");
-  else parts.push("sin tests");
   return parts.join(" · ");
 }
 
@@ -361,7 +361,6 @@ export const STATUS_LABELS: Record<SessionStatus, string> = {
   working: "Trabajando",
   approval: "Espera permiso",
   question: "Te pregunta",
-  waiting: "Te espera",
   finished: "Terminó",
   error: "Error",
   ratelimit: "Límite de uso",
@@ -373,7 +372,6 @@ export const STATUS_COLORS: Record<SessionStatus, string> = {
   working: "#3B9EFF",
   approval: "#F5A524",
   question: "#22D3EE",
-  waiting: "#22D3EE",
   finished: "#34D399",
   error: "#F4505E",
   ratelimit: "#F59E0B",

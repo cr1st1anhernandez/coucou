@@ -29,6 +29,8 @@ interface HookPayload {
   tool_input?: Record<string, unknown>;
   /** Added by coucou-hook on PostToolUse for edits, counted before truncation. */
   coucou_lines?: { added?: number; removed?: number } | null;
+  /** Added by coucou-hook: the repo or worktree folder the session works in. */
+  coucou_root?: string | null;
 }
 
 function lastPathComponent(p: string): string {
@@ -97,6 +99,16 @@ function approvalTarget(tool: string, input: Record<string, unknown>): string {
   return tool;
 }
 
+/** Claude Code's tool for asking the user a question mid-task. */
+const ASK_TOOL = "AskUserQuestion";
+
+/** AskUserQuestion carries `questions: [{ question, header, options }]`. */
+function firstQuestion(input: Record<string, unknown>): string {
+  const list = Array.isArray(input.questions) ? (input.questions as Record<string, unknown>[]) : [];
+  const q = list[0]?.question;
+  return typeof q === "string" ? q : "Claude tiene una pregunta";
+}
+
 export function registerHookHandlers(island: Island) {
   setNagHandler((session) => nag(island, session));
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
@@ -144,7 +156,7 @@ function handleHook(island: Island, payload: HookPayload) {
     return;
   }
 
-  const session = touchSession(payload.session_id || "default", cwd);
+  const session = touchSession(payload.session_id || "default", cwd, payload.coucou_root);
   /** Nothing else is holding the pill: no approval card, no other busy session on it. */
   const pillFree = () =>
     !State.pendingApproval &&
@@ -157,6 +169,26 @@ function handleHook(island: Island, payload: HookPayload) {
     } else if (isAlert) {
       island.alert(view);
     } else if (State.mode === "hidden") {
+      island.reveal();
+    }
+  };
+
+  /**
+   * Claude asked you something and won't go on until you answer, in the terminal.
+   * Chimes once per question; the reminder takes it from there.
+   */
+  const asks = (question: string) => {
+    const already = session.status === "question";
+    setStatus(session, "question");
+    if (question) appendStep(session, question.slice(0, 120));
+    if (already) return;
+    Sound.play("question");
+    const free = pillFree();
+    if (free) makeCurrent(session.id);
+    if (focused && free) {
+      surface("question", true);
+    } else {
+      State.setPillBadge(CLAUDE_ID, "approval");
       island.reveal();
     }
   };
@@ -181,8 +213,12 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "PreToolUse": {
-      setStatus(session, "working");
       const tool = payload.tool_name ?? "Tool";
+      if (tool === ASK_TOOL) {
+        asks(firstQuestion(payload.tool_input ?? {}));
+        break;
+      }
+      setStatus(session, "working");
       appendStep(session, stepLabel(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
@@ -204,12 +240,10 @@ function handleHook(island: Island, payload: HookPayload) {
         setStatus(session, "ratelimit");
         Sound.play("rate");
       } else if (message.endsWith("?")) {
-        setStatus(session, "question");
-        appendStep(session, message);
-      } else if (lower.includes("waiting for your input")) {
-        // Claude Code's own "idle for a minute" notice: it's done and wants you.
-        setStatus(session, "waiting");
+        asks(message);
       }
+      // "Claude is waiting for your input" is ignored on purpose: it only means
+      // the turn ended, which the Stop event already announced.
       break;
     }
 
@@ -246,6 +280,13 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PermissionRequest": {
       const requestId = payload.request_id ?? "";
+      // A question isn't a permission: Allow/Deny can't answer it. Let the
+      // terminal show it right away and flag it as a question instead.
+      if (payload.tool_name === ASK_TOOL) {
+        if (requestId) void Bridge.approvalDecline(requestId);
+        asks(firstQuestion(payload.tool_input ?? {}));
+        break;
+      }
       // One card, one request. A second one must never quietly replace the first
       // — that would leave a human staring at request B while request A waits for
       // a decision nobody can give. Hand it straight back to the terminal.

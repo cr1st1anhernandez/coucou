@@ -11,7 +11,7 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
-import { STATUS_COLORS, STATUS_LABELS, isWaiting, summaryText, waitedFor } from "../island/sessions";
+import { STATUS_COLORS, STATUS_LABELS, isWaiting, summaryText, waitingSinceLabel } from "../island/sessions";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -115,9 +115,11 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
       tabSessions.classList.toggle("on", v === "sessions");
-      const n = State.sessions.length;
-      sessionCount.textContent = n > 0 ? String(n) : "";
-      sessionCount.classList.toggle("alert", State.sessions.some(isWaiting));
+      // Only what needs you: a permission or a question. It drops as you answer.
+      const pending = State.sessions.filter(isWaiting).length;
+      sessionCount.textContent = pending > 0 ? String(pending) : "";
+      const open = State.sessions.length;
+      tabSessions.title = open === 1 ? "Sesiones · 1 abierta" : `Sesiones · ${open} abiertas`;
       gearBtn.classList.toggle("on", v === "settings");
       clear(gearBtn);
       gearBtn.append(svg(v === "settings" ? ICONS.gearFill : ICONS.gear, 14));
@@ -518,11 +520,11 @@ function buildSessions(actions: ViewActions): ViewHost {
     const s = State.sessions.find((x) => x.id === id);
     if (!s) return null;
     const color = STATUS_COLORS[s.status];
-    const status = isWaiting(s) ? `${STATUS_LABELS[s.status]} · ${waitedFor(s)}` : STATUS_LABELS[s.status];
-    const detail =
-      s.status === "finished" || s.status === "error" || s.status === "waiting"
-        ? summaryText(s.summary)
-        : s.steps.at(-1) ?? "";
+    const status = isWaiting(s)
+      ? `${STATUS_LABELS[s.status]} · ${waitingSinceLabel(s)}`
+      : STATUS_LABELS[s.status];
+    const ended = s.status === "finished" || s.status === "error";
+    const detail = (ended && summaryText(s.summary)) || (s.steps.at(-1) ?? "");
     const r = h(
       "button",
       {
@@ -543,7 +545,7 @@ function buildSessions(actions: ViewActions): ViewHost {
     el,
     sync() {
       const next = State.sessions
-        .map((s) => [s.id, s.status, s.steps.at(-1), s.waitingSince, waitedFor(s),
+        .map((s) => [s.id, s.name, s.status, s.steps.at(-1), s.waitingSince,
           summaryText(s.summary), s.id === State.currentSessionId].join("~"))
         .join("|");
       if (next === key) return;
