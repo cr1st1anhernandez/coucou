@@ -134,29 +134,14 @@ fn open_url(url: String) {
 }
 
 /// "Open terminal" brings the open Warp window to the front (or launches Warp),
-/// and falls back to VS Code, then Explorer, when Warp isn't installed.
+/// and opens the folder in Explorer when Warp isn't installed.
 #[tauri::command]
 fn open_terminal(path: Option<String>) -> bool {
-    warp::focus_or_launch(path.as_deref()) || open_in_vscode(path)
-}
-
-/// Opens the working folder in VS Code when `code` is on PATH, and falls back
-/// to Explorer otherwise.
-#[tauri::command]
-fn open_in_vscode(path: Option<String>) -> bool {
-    // No `cmd /C` anywhere near this. The path is a project folder chosen by
-    // whoever is using Claude Code, and cmd would happily read `&`, `^` and `%`
-    // in a folder name as syntax. Finding the launcher ourselves and handing the
-    // path over as a separate argument keeps it a path.
-    if let Some(code) = find_on_path("code") {
-        let mut cmd = Command::new(code);
-        if let Some(p) = path.as_deref().filter(|p| !p.is_empty()) {
-            cmd.arg(p);
-        }
-        if cmd.creation_flags(CREATE_NO_WINDOW).spawn().is_ok() {
-            return true;
-        }
+    if warp::focus_or_launch(path.as_deref()) {
+        return true;
     }
+    // No `cmd /C`: the folder name is handed over as a separate argument, so
+    // `&`, `^` or `%` in it stay part of a path.
     if let Some(p) = path.as_deref().filter(|p| !p.is_empty()) {
         let _ = Command::new("explorer").arg(p).spawn();
     }
@@ -164,8 +149,6 @@ fn open_in_vscode(path: Option<String>) -> bool {
 }
 
 /// Our own `where`: walks %PATH% against %PATHEXT%, no shell involved.
-/// Rust quotes arguments correctly for `.cmd`/`.bat` targets since 1.77, so
-/// spawning `code.cmd` directly is safe.
 pub(crate) fn find_on_path(stem: &str) -> Option<std::path::PathBuf> {
     let exts = std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".into());
     let dirs = std::env::var_os("PATH")?;
@@ -397,7 +380,6 @@ pub fn run() {
             reposition,
             open_url,
             open_terminal,
-            open_in_vscode,
             quit_app,
             hooks_status,
             hooks_preview,

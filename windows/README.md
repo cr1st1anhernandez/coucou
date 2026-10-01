@@ -66,7 +66,7 @@ exits cleanly if the app is closed, slow or crashed — **a Claude Code session 
 never blocked or slowed down by Coucou.** If nobody answers a permission request
 in time, Coucou stays quiet and Claude Code asks in the terminal as usual.
 
-It works from any terminal — Windows Terminal, PowerShell, VS Code, Git Bash.
+It works from any terminal — Warp, Windows Terminal, PowerShell, Git Bash.
 
 ## Chat and keys
 
@@ -142,7 +142,7 @@ problems. It stays on your machine.
   the top edge instead of hiding in a notch.
 - Permission approval works from **any** terminal; the Mac build only listens to
   VS Code sessions.
-- Not in this version: sending a file by email, dragging Mochi onto a window to
-  attach it as context, and jumping to a specific terminal window — "Open
-  terminal" opens the working folder in VS Code when `code` is on your `PATH`.
+- Not in this version: sending a file by email and dragging Mochi onto a window
+  to attach it as context. "Open terminal" brings the open Warp window to the
+  front (or launches Warp), and opens the folder in Explorer without it.
 - Cal.com shows the next bookings as a list rather than the Mac's calendar.

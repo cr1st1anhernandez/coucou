@@ -162,7 +162,6 @@ fn read_event() -> Option<(String, String)> {
         ("term_program", "TERM_PROGRAM"),
         ("wt_session", "WT_SESSION"),
         ("term_session_id", "TERM_SESSION_ID"),
-        ("vscode_pid", "VSCODE_PID"),
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
     ] {
         if !map.contains_key(key) {
