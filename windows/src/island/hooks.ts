@@ -37,22 +37,22 @@ function lastPathComponent(p: string): string {
   return idx >= 0 ? cleaned.slice(idx + 1) : cleaned;
 }
 
-/** frenchStep() — same labels as the macOS app. */
+/** Step labels, in Spanish (the macOS app shows them in French). */
 const TOOL_LABELS: Record<string, string> = {
-  Bash: "Exécute",
-  Read: "Lit",
-  Write: "Écrit",
-  Edit: "Modifie",
-  Glob: "Cherche",
-  Grep: "Recherche",
-  WebSearch: "Recherche web",
-  WebFetch: "Récupère",
-  TodoWrite: "Tâches",
-  Task: "Agent",
-  LS: "Liste",
-  MultiEdit: "Modifie",
+  Bash: "Ejecuta",
+  Read: "Lee",
+  Write: "Escribe",
+  Edit: "Edita",
+  Glob: "Busca",
+  Grep: "Busca en",
+  WebSearch: "Busca en la web",
+  WebFetch: "Descarga",
+  TodoWrite: "Tareas",
+  Task: "Agente",
+  LS: "Lista",
+  MultiEdit: "Edita",
   NotebookEdit: "Notebook",
-  PowerShell: "Exécute",
+  PowerShell: "Ejecuta",
 };
 
 function stepLabel(tool: string, input: Record<string, unknown>): string {
