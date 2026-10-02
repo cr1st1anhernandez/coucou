@@ -40,10 +40,7 @@ impl Default for Settings {
             sound_volume: 0.12,
             auto_close_interval: 15.0,
             absence_interval: 180.0,
-            active_integrations: vec![
-                "integration_github".into(),
-                "integration_calendar".into(),
-            ],
+            active_integrations: vec!["integration_github".into()],
             screen: "primary".into(),
             autostart: false,
             hooks_installed: false,
@@ -79,7 +76,7 @@ fn settings_path() -> PathBuf {
 }
 
 /// Pills this build still has; older settings may name removed ones.
-const INTEGRATION_IDS: &[&str] = &["integration_github", "integration_calendar"];
+const INTEGRATION_IDS: &[&str] = &["integration_github"];
 
 pub fn load() -> Settings {
     let mut settings: Settings = match std::fs::read(settings_path()) {

@@ -9,7 +9,6 @@ const SERVICE: &str = "fr.louisraille.coucou";
 pub const KNOWN_KEYS: &[&str] = &[
     "anthropic-api-key",
     "github-token",
-    "calendar-ical-url",
 ];
 
 fn entry(key: &str) -> Option<Entry> {

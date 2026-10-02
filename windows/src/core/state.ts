@@ -2,7 +2,6 @@
 
 import type { BotEmoteName, BotStateName, IslandMode, IslandViewName } from "./layout";
 import type { EyeShape } from "../mochi/engine";
-import type { Meeting } from "../island/calendar";
 
 export type AgentSource = "claudeCode" | "n8n";
 export type PillBadge = "approval" | "finished" | "error";
@@ -135,10 +134,9 @@ const task = (
 export const INTEGRATION_AGENTS: AgentTask[] = [
   task("integration_claude", "Warp", "#F5F6F8", "claudeCode"),
   task("integration_github", "GitHub", "#F4505E", "n8n"),
-  task("integration_calendar", "Calendario", "#4285F4", "n8n"),
 ];
 
-export const TOGGLEABLE_INTEGRATION_IDS = ["integration_github", "integration_calendar"];
+export const TOGGLEABLE_INTEGRATION_IDS = ["integration_github"];
 
 /** What an integration poller last reported. */
 export interface IntegrationInfo {
@@ -170,7 +168,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundVolume: 0.12,
   autoCloseInterval: 15,
   absenceInterval: 180,
-  activeIntegrations: ["integration_github", "integration_calendar"],
+  activeIntegrations: ["integration_github"],
   screen: "primary",
   autostart: false,
   hooksInstalled: false,
@@ -209,8 +207,6 @@ class AppState {
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: PendingQuestion | null = null;
-  /** The meeting the reminder card is about. */
-  meeting: Meeting | null = null;
 
   /** Live Claude Code sessions, most recent activity first. */
   sessions: ClaudeSession[] = [];

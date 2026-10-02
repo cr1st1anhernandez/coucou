@@ -269,12 +269,6 @@ const INTEGRATIONS: IntegrationDef[] = [
   { id: "integration_github", name: "GitHub", color: "#F4505E",
     // Classic token with `repo`, or fine-grained with Pull requests + Commit statuses (read).
     fields: [{ key: "github-token", label: "Token", placeholder: "ghp_…  (permiso repo)", secret: true }] },
-  // Google Calendar → Configuración → tu calendario → "Dirección secreta en formato iCal".
-  { id: "integration_calendar", name: "Calendario", color: "#4285F4",
-    fields: [{
-      key: "calendar-ical-url", label: "Dirección iCal",
-      placeholder: "https://calendar.google.com/calendar/ical/…/basic.ics", secret: true,
-    }] },
 ];
 
 const MAX_ACTIVE = 4;
@@ -490,7 +484,7 @@ async function main() {
 
   const hasKey = (await Bridge.secretPresent("anthropic-api-key")) ?? false;
 
-  const keys = ["github-token", "calendar-ical-url"];
+  const keys = ["github-token"];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;
 

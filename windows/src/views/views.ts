@@ -9,7 +9,6 @@ import { State, type AgentTask, type AskedQuestion } from "../core/state";
 import { MAX_CARD_ROWS, washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
-import { clock, startsIn } from "../island/calendar";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import {
@@ -458,45 +457,6 @@ function buildError(actions: ViewActions): ViewHost {
   };
 }
 
-// ── Meeting ───────────────────────────────────────────────────────────────────
-
-/** A meeting starts soon: when, and the call link when the invite has one. */
-function buildMeeting(actions: ViewActions): ViewHost {
-  const who = h("div");
-  const title = h("div", { class: "title one-line" });
-  const when = h("div", { class: "summary" });
-  const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("indigo", stack(116, 16, who, title, when, row)));
-  let key = "";
-  return {
-    el,
-    sync() {
-      const m = State.meeting;
-      clear(who);
-      // Built by hand: the reminder comes even when the pill isn't on screen.
-      who.append(h("div", { class: "who-row" },
-        dot("#4285F4", 8),
-        h("span", { class: "n", text: "Calendario" }),
-        h("span", { text: m ? startsIn(m) : "" }),
-      ));
-      title.textContent = m?.title ?? "";
-      when.textContent = m ? (m.end > m.start ? `${clock(m.start)} – ${clock(m.end)}` : clock(m.start)) : "";
-      const next = `${m?.key}:${m?.link ?? ""}`;
-      if (next === key) return;
-      key = next;
-      clear(row);
-      const link = m?.link;
-      if (link) {
-        row.append(btn("Unirme", "primary", () => {
-          actions.openUrl(link);
-          actions.collapse();
-        }));
-      }
-      row.append(btn("OK", link ? "secondary" : "primary", () => actions.collapse()));
-    },
-  };
-}
-
 // ── Rate limit ────────────────────────────────────────────────────────────────
 
 /** The session hit its usage limit: when it comes back, counting down. */
@@ -750,7 +710,6 @@ export function buildViews(
   map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("ratelimit", buildRateLimit(actions));
-  map.set("meeting", buildMeeting(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());
   map.set("note", buildNote());

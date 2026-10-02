@@ -5,7 +5,6 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
-import { clock, upcomingMeetings } from "../island/calendar";
 
 function header(color: string, name: string, kind: string, extra?: Node): HTMLElement {
   const row = h("div", { class: "int-head" }, dot(color, 7), h("b", { text: name }), h("span", { text: kind }));
@@ -33,7 +32,6 @@ function arr(id: string, key: string): Record<string, unknown>[] {
 
 const OPEN_URLS: Record<string, string> = {
   integration_github: "https://github.com",
-  integration_calendar: "https://calendar.google.com",
 };
 
 function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
@@ -151,42 +149,6 @@ function githubCard(): HTMLElement {
   );
 }
 
-// ── Google Calendar ───────────────────────────────────────────────────────────
-
-/** The next meetings, today and tomorrow, from the secret iCal feed. */
-function calendarCard(): HTMLElement {
-  const now = Date.now();
-  const meetings = upcomingMeetings(now);
-  const rows = h("div", { class: "int-rows tight" });
-  if (meetings.length === 0) {
-    rows.append(h("div", { class: "int-empty", text: "Sin reuniones en las próximas horas" }));
-  }
-  const today = new Date(now).toDateString();
-  for (const m of meetings.slice(0, 3)) {
-    const live = m.start <= now && m.end > now;
-    const day = new Date(m.start).toDateString() === today ? "" : "mañana ";
-    const row = h(
-      "div",
-      { class: "int-row" },
-      dot(live ? "#22C55E" : "#4285F4", 4),
-      h("span", {
-        class: "int-time",
-        style: `color:${live ? "#22C55E" : "#8AB4F8"}`,
-        text: live ? "ahora" : `${day}${clock(m.start)}`,
-      }),
-      h("span", { class: "int-name", text: m.title }),
-    );
-    if (m.link) {
-      const link = m.link;
-      row.classList.add("link");
-      row.title = "Unirme";
-      row.addEventListener("click", () => void Bridge.openUrl(link));
-    }
-    rows.append(row);
-  }
-  return h("div", { class: "int-card" }, header("#4285F4", "Calendario", "Próximas"), rows);
-}
-
 // ── Dispatch ──────────────────────────────────────────────────────────────────
 
 export interface IntegrationCardHooks {
@@ -203,8 +165,6 @@ export function hasIntegrationData(id: string): boolean {
   switch (id) {
     case "integration_github":
       return get(id).totalRepos != null;
-    case "integration_calendar":
-      return info.loaded;
     default:
       return false;
   }
@@ -216,8 +176,6 @@ export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHoo
   switch (task.id) {
     case "integration_github":
       return githubCard();
-    case "integration_calendar":
-      return calendarCard();
     default:
       return idleCard(task, hooks.openSettings);
   }

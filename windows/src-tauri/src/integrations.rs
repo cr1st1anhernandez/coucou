@@ -1,4 +1,4 @@
-// Integration pollers — the Rust side of GithubPoller, plus Google Calendar.
+// Integration poller — the Rust side of GithubPoller.
 //
 // Same endpoints, same first-run delays and intervals as the Swift pollers. Each
 // one emits an `integration` event; the island owns the badge, the sound and the
@@ -61,8 +61,7 @@ pub fn set_paused(on: bool) {
 /// Spawns every poller with the macOS delays and intervals.
 pub fn start(app: AppHandle) {
     // Every minute: a review or a CI run is news you want while it's fresh.
-    spawn(app.clone(), "integration_github", 7, 60, poll_github);
-    spawn(app, "integration_calendar", 10, 300, poll_calendar);
+    spawn(app, "integration_github", 7, 60, poll_github);
 }
 
 /// True when the user has this integration switched on in settings.
@@ -101,7 +100,6 @@ where
 pub async fn poll_once(app: AppHandle, id: &str) {
     match id {
         "integration_github" => poll_github(app).await,
-        "integration_calendar" => poll_calendar(app).await,
         _ => {}
     }
 }
@@ -362,53 +360,4 @@ mod tests {
         assert_eq!(pr_status("", "", false), "review");
         assert!(pr_event_rank("ci_failed") < pr_event_rank("APPROVED"));
     }
-}
-
-// ── Google Calendar (secret iCal address) ─────────────────────────────────────
-
-/// The feed of a whole calendar is rarely more than a few MB; past this, stop.
-const MAX_ICAL_BYTES: usize = 8 << 20;
-
-async fn poll_calendar(app: AppHandle) {
-    let Some(url) = secrets::get("calendar-ical-url") else { return };
-    let url = url.trim().replacen("webcal://", "https://", 1);
-    let fail = |error: String| {
-        emit(&app, IntegrationUpdate {
-            id: "integration_calendar",
-            data: json!({}),
-            error: Some(error),
-            event: None,
-        })
-    };
-    if !url.starts_with("https://") {
-        fail("La dirección debe empezar con https://".into());
-        return;
-    }
-    let response = match client().get(&url).header("User-Agent", "Coucou").send().await {
-        Ok(r) => r,
-        Err(e) => {
-            fail(format!("Sin conexión: {e}"));
-            return;
-        }
-    };
-    if !response.status().is_success() {
-        fail(status_error(response.status().as_u16(), "Google no aceptó la dirección"));
-        return;
-    }
-    let Ok(bytes) = response.bytes().await else { return };
-    if bytes.len() > MAX_ICAL_BYTES {
-        fail("El calendario es demasiado grande".into());
-        return;
-    }
-    let text = String::from_utf8_lossy(&bytes);
-    if !text.contains("BEGIN:VCALENDAR") {
-        fail("Eso no parece una dirección iCal".into());
-        return;
-    }
-    emit(&app, IntegrationUpdate {
-        id: "integration_calendar",
-        data: json!({ "events": crate::calendar::parse(&text, None) }),
-        error: None,
-        event: None,
-    });
 }
