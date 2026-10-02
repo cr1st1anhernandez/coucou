@@ -36,7 +36,8 @@ interface Tween {
 
 type PropKey =
   | "yaw" | "pitch" | "roll" | "tilt" | "open" | "sx" | "sy"
-  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS";
+  | "oy" | "ox" | "tint" | "morph" | "hands" | "blush" | "es" | "badgeS"
+  | "phones" | "ring" | "ringA";
 
 interface BotStateCfg {
   color: RGB;
@@ -53,7 +54,7 @@ interface BotStateCfg {
 }
 
 interface Particle {
-  type: "heart" | "star" | "spark" | "sweat" | "z";
+  type: "heart" | "star" | "spark" | "sweat" | "z" | "note";
   x: number; y: number; vx: number; vy: number;
   age: number; life: number; rot: number; size: number;
 }
@@ -173,6 +174,17 @@ export class BotEngine {
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
   sx = 1; sy = 1; oy = 0; ox = 0;
   tint = 0; morph = 0; hands = 0; blush = 0; es = 1; badgeS = 0;
+
+  // Coucou for Windows additions: headphones (focus mode), the to-do ring, and
+  // the ripples of a knock on the glass.
+  phones = 0;
+  /** Ring progress 0…1 and its opacity. */
+  ring = 0; ringA = 0;
+  private ringDone = -1;
+  private ringColor: RGB = [0.655, 0.545, 0.98];
+  private focusMode = false;
+  private nextNote = 0;
+  private knocks: number[] = [];
 
   // Targets
   tgYaw = 0; tgPitch = 0; tgTilt = 0; tgSy = 1; tgSx = 1; tgEs = 1;
@@ -424,6 +436,80 @@ export class BotEngine {
     }
   }
 
+  /**
+   * The to-do ring: `done` of `total` tasks (TodoWrite). A task ticked off
+   * fills the arc a little more and Mochi hops; all done turns it green. A
+   * total of 0 fades the ring away.
+   */
+  setProgress(done: number, total: number) {
+    if (total <= 0) {
+      if (this.ringDone >= 0) this.anim("ringA", [[0, 300, Ease.inOut]]);
+      this.ringDone = -1;
+      return;
+    }
+    const target = Math.max(0, Math.min(1, done / total));
+    if (done === this.ringDone && Math.abs(this.ring - target) < 0.001) return;
+    const first = this.ringDone < 0;
+    const advanced = !first && done > this.ringDone;
+    this.ringDone = done;
+    this.ringColor = done >= total ? [0.204, 0.831, 0.6] : [0.655, 0.545, 0.98];
+    if (first) this.ring = 0;
+    this.anim("ringA", [[1, 260, Ease.out]]);
+    this.anim("ring", [[target, 420, Ease.out]]);
+    if (advanced) {
+      this.anim("oy", [[-0.16, 120, Ease.out], [0, 260, Ease.back]]);
+      this.anim("sy", [[0.86, 80, Ease.out], [1.08, 140, Ease.out], [1, 180, Ease.back]]);
+      this.anim("sx", [[1.12, 80, Ease.out], [0.95, 140, Ease.out], [1, 180, Ease.back]]);
+      if (done >= total) setTimeout(() => this.emit("spark", 5), 250);
+    }
+  }
+
+  /**
+   * Focus mode, while the user is away and Claude keeps working: headphones on,
+   * eyes closed, nodding along with little notes. Off with `stretch` when the
+   * work is done: the headphones lift off, Mochi stretches and beams.
+   */
+  setFocusMode(on: boolean, stretch = false) {
+    if (on === this.focusMode) return;
+    this.focusMode = on;
+    if (on) {
+      this.anim("phones", [[1, 420, Ease.back]]);
+      this.permanentEye = "closed";
+      this.eyeOverride = "closed";
+      this.eyeOverrideUntil = Number.POSITIVE_INFINITY;
+      this.nextNote = now() + 0.4;
+      return;
+    }
+    this.anim("phones", [[0, 380, Ease.inOut]]);
+    this.permanentEye = null;
+    this.eyeOverride = null;
+    this.eyeOverrideUntil = 0;
+    if (stretch) this.stretch();
+  }
+
+  /** A big stretch and a smile — the end of a long stint. */
+  stretch() {
+    setTimeout(() => {
+      this.anim("sy", [[1.28, 320, Ease.out], [1.28, 220, Ease.lin], [0.9, 160, Ease.inOut], [1, 240, Ease.back]]);
+      this.anim("sx", [[0.84, 320, Ease.out], [0.84, 220, Ease.lin], [1.08, 160, Ease.inOut], [1, 240, Ease.back]]);
+      this.anim("oy", [[-0.18, 320, Ease.out], [-0.18, 220, Ease.lin], [0, 400, Ease.back]]);
+      this.anim("hands", [[1, 260, Ease.out], [1, 300, Ease.lin], [0, 260, Ease.inOut]]);
+      this.eyeOverride = "closed";
+      this.eyeOverrideUntil = now() + 0.55;
+      setTimeout(() => {
+        this.triggerEmote("happy", 1.8);
+        this.emit("spark", 6);
+      }, 650);
+    }, 300);
+  }
+
+  /** Knock on the glass: Mochi lunges at the screen and rings ripple out. */
+  knock() {
+    this.anim("sx", [[1.26, 90, Ease.out], [1, 170, Ease.back]]);
+    this.anim("sy", [[1.26, 90, Ease.out], [1, 170, Ease.back]]);
+    this.knocks.push(now() + 0.08);
+  }
+
   emit(type: Particle["type"], count: number) {
     for (let i = 0; i < count; i++) {
       const isZ = type === "z";
@@ -459,6 +545,7 @@ export class BotEngine {
       this.particles.length > 0 ||
       this.cfg.bounces || this.cfg.scans || this.cfg.breathes || this.cfg.zz || this.cfg.sweat ||
       this.isMini ||
+      this.focusMode || this.knocks.length > 0 ||
       Math.abs(this.tgYaw - this.yaw) > 0.002 ||
       Math.abs(this.tgPitch - this.pitch) > 0.002 ||
       Math.abs(this.tgTilt - this.tilt) > 0.002 ||
@@ -539,6 +626,16 @@ export class BotEngine {
       const wt = n - this.waveStart;
       this.tgTilt = -0.06 + Math.sin(2 * Math.PI * 1.2 * wt) * 0.07;
     }
+
+    // Focus mode: nod to the beat, a note now and then.
+    if (this.focusMode) {
+      this.tgTilt = Math.sin(t * Math.PI * 2 * 1.1) * 0.08;
+      if (n > this.nextNote) {
+        this.emit("note", 1);
+        this.nextNote = n + 0.9 + Math.random() * 0.5;
+      }
+    }
+    this.knocks = this.knocks.filter((k) => n - k < 0.75);
 
     const bounce = this.cfg.bounces ? -Math.abs(Math.sin(t * 5.2)) * 0.07 : 0;
     const kGen = 1 - Math.pow(0.0008, dt);
@@ -648,6 +745,8 @@ export class BotEngine {
     const cy = H / 2 + this.particleOverhang / 2 + this.oy * R + R * 0.06;
 
     this.drawHandsBehind(x, R, rx, ry, cx, cy);
+    this.drawRing(x, R, rx, cx, cy);
+    this.drawKnocks(x, R, rx, ry, cx, cy);
 
     x.save();
     x.translate(cx, cy);
@@ -673,6 +772,7 @@ export class BotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
+    if (this.phones > 0.01 && this.morph < 0.3) this.drawPhones(x, R, rx, ry);
 
     x.restore();
 
@@ -931,6 +1031,83 @@ export class BotEngine {
     x.restore();
   }
 
+  /** The to-do ring: a faint track and the done arc, clockwise from the top. */
+  private drawRing(x: CanvasRenderingContext2D, R: number, rx: number, cx: number, cy: number) {
+    if (this.ringA < 0.01) return;
+    const r = rx * 1.3;
+    x.save();
+    x.globalAlpha = this.ringA;
+    x.lineWidth = Math.max(1.4, R * 0.1);
+    x.lineCap = "round";
+    x.strokeStyle = "rgba(255,255,255,0.12)";
+    x.beginPath();
+    x.arc(cx, cy, r, 0, Math.PI * 2);
+    x.stroke();
+    if (this.ring > 0.002) {
+      x.strokeStyle = rgba(this.ringColor);
+      x.shadowColor = rgba(this.ringColor, 0.8);
+      x.shadowBlur = R * 0.25;
+      x.beginPath();
+      x.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * this.ring);
+      x.stroke();
+    }
+    x.restore();
+  }
+
+  /** Each knock sends two rings out across the "glass". */
+  private drawKnocks(x: CanvasRenderingContext2D, R: number, rx: number, ry: number, cx: number, cy: number) {
+    const n = now();
+    for (const k of this.knocks) {
+      for (let i = 0; i < 2; i++) {
+        const p = (n - k - i * 0.12) / 0.6;
+        if (p <= 0 || p >= 1) continue;
+        const grow = 1 + p * 0.9;
+        x.save();
+        x.strokeStyle = `rgba(255,255,255,${0.55 * (1 - p)})`;
+        x.lineWidth = Math.max(1, R * 0.07 * (1 - p * 0.5));
+        x.beginPath();
+        x.ellipse(cx, cy, rx * 1.1 * grow, ry * 1.05 * grow, 0, 0, Math.PI * 2);
+        x.stroke();
+        x.restore();
+      }
+    }
+  }
+
+  /**
+   * Headphones, in body space: a band over the top and a cup on each side.
+   * They drop on from above and lift off upwards as `phones` goes 0 ↔ 1.
+   */
+  private drawPhones(x: CanvasRenderingContext2D, R: number, rx: number, ry: number) {
+    const k = this.phones;
+    x.save();
+    x.globalAlpha = Math.min(1, k * 1.4);
+    x.translate(0, -(1 - k) * R * 0.9);
+    const band = Math.max(1.2, R * 0.15);
+    x.lineCap = "round";
+    x.strokeStyle = "#2B2F3A";
+    x.lineWidth = band;
+    x.beginPath();
+    x.ellipse(0, -ry * 0.12, rx * 1.03, ry * 1.1, 0, Math.PI * 1.04, Math.PI * 1.96);
+    x.stroke();
+    x.strokeStyle = "#6366F1";
+    x.lineWidth = band * 0.4;
+    x.beginPath();
+    x.ellipse(0, -ry * 0.12, rx * 1.03, ry * 1.1, 0, Math.PI * 1.25, Math.PI * 1.75);
+    x.stroke();
+    for (const sd of [-1, 1]) {
+      const cw = R * 0.42;
+      const ch = R * 0.66;
+      const cxp = sd * rx * 1.0;
+      x.fillStyle = "#1F2230";
+      roundRectPath(x, cxp - cw / 2, -ry * 0.32, cw, ch, cw * 0.45);
+      x.fill();
+      x.fillStyle = "#6366F1";
+      roundRectPath(x, cxp - cw * 0.3, -ry * 0.22, cw * 0.6, ch * 0.72, cw * 0.28);
+      x.fill();
+    }
+    x.restore();
+  }
+
   /** Hands sit behind the body — drawn before it, in world coordinates. */
   private drawHandsBehind(
     x: CanvasRenderingContext2D,
@@ -1113,6 +1290,14 @@ export class BotEngine {
           x.textAlign = "center";
           x.textBaseline = "middle";
           x.fillText("z", 0, 0);
+          break;
+        case "note":
+          x.rotate(Math.sin(p.age * 5) * 0.25);
+          x.fillStyle = "#A5B4FC";
+          x.font = `700 ${sz * 2.4}px "Segoe UI Symbol", ${FONT}`;
+          x.textAlign = "center";
+          x.textBaseline = "middle";
+          x.fillText(p.rot > Math.PI ? "♪" : "♫", 0, 0);
           break;
       }
       x.restore();

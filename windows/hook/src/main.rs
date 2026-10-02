@@ -72,7 +72,17 @@ fn connect() -> Option<std::fs::File> {
     }
 }
 
+/// Set by Coucou on the `claude -p` runs behind its own chats. Those are not the
+/// user's sessions: they must not show up on the island, chime, or ask for
+/// permission there.
+const INTERNAL_ENV: &str = "COUCOU_INTERNAL";
+
 fn main() {
+    if std::env::var_os(INTERNAL_ENV).is_some() {
+        // Drain stdin so Claude Code never sees a broken pipe.
+        let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
+        std::process::exit(0);
+    }
     let Some((payload, event, ask_input)) = read_event() else { std::process::exit(0) };
 
     let waits_for_answer = event == "PermissionRequest";

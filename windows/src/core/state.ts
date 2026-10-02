@@ -23,6 +23,21 @@ export interface AgentTask {
   sessionId?: string | null;
   /** That session's Warp tab, `warp://session/<id>`, when it runs in Warp. */
   sessionFocusUrl?: string | null;
+  /** The session's to-do list progress (TodoWrite), for the ring around Mochi. */
+  todo?: TodoProgress | null;
+}
+
+export interface TodoProgress {
+  done: number;
+  total: number;
+}
+
+/** A subagent Claude launched; it shows as a mini Mochi beside Mochi. */
+export interface Subagent {
+  id: string;
+  type: string;
+  /** Date.now() when it finished; it flies back into Mochi shortly after. */
+  doneAt: number | null;
 }
 
 /** Where a Claude Code session stands, as shown in the Sessions view. */
@@ -68,6 +83,16 @@ export interface ClaudeSession {
   focusUrl: string | null;
   /** Date.now() at which a rate-limited session's limit resets, when Claude said. */
   rateResetAt: number | null;
+  todo: TodoProgress | null;
+  subagents: Subagent[];
+}
+
+/** One line of the "Mientras no estabas" card. */
+export interface AwayRow {
+  sessionId: string;
+  name: string;
+  status: SessionStatus;
+  detail: string;
 }
 
 export interface ApprovalInfo {
@@ -106,6 +131,23 @@ export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
   content: string;
+  /** Name of the file sent with this message. */
+  attachment?: string;
+  /** What Claude is doing while the reply is still empty ("Leyendo el archivo…"). */
+  status?: string;
+}
+
+/** A file waiting to go out with the next message of a chat. */
+export interface Attachment {
+  name: string;
+  path: string;
+}
+
+/** The library's ways of taking a prompt to the terminal (at least one is on). */
+export interface PasteModes {
+  copy: boolean;
+  warp: boolean;
+  paste: boolean;
 }
 
 export type PromptContext =
@@ -161,6 +203,9 @@ export interface Settings {
   waitingAlertMinutes: number;
   /** Per-cue sound switches (SOUND_CUES); a missing cue uses its default. */
   soundCues: Record<string, boolean>;
+  /** The chat runs on the user's Claude Code (their account) or on an API key. */
+  chatEngine: "claudeCode" | "api";
+  pasteModes: PasteModes;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -175,6 +220,8 @@ export const DEFAULT_SETTINGS: Settings = {
   model: "claude-opus-5",
   waitingAlertMinutes: 2,
   soundCues: {},
+  chatEngine: "claudeCode",
+  pasteModes: { copy: true, warp: true, paste: false },
 };
 
 type Listener = () => void;
@@ -205,8 +252,13 @@ class AppState {
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
+  /** Files picked or dropped onto a chat, waiting for its next message. */
+  attachments: { chat: Attachment | null; library: Attachment | null } = { chat: null, library: null };
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: PendingQuestion | null = null;
+
+  /** What happened while the user was away, and for how long they were gone. */
+  away: { rows: AwayRow[]; minutes: number } | null = null;
 
   /** Live Claude Code sessions, most recent activity first. */
   sessions: ClaudeSession[] = [];

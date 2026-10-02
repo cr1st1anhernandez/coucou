@@ -1,16 +1,19 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
 mod claude;
+mod claude_code;
 mod files;
 mod hooks;
 mod integrations;
 mod island;
+mod library;
 mod log;
 mod pipe;
 mod secrets;
 mod settings;
 mod tray;
 mod warp;
+mod win_ui;
 mod win_user;
 
 use std::collections::HashMap;
@@ -24,6 +27,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 use tauri_plugin_autostart::{ManagerExt, MacosLauncher};
 
 use claude::{Chat, ChatContext, ChatReply};
+use claude_code::{Channel, CodeChats, CodeReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
@@ -63,6 +67,7 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
+    let settings = settings.normalized();
     let (screen_changed, autostart_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
@@ -255,8 +260,111 @@ async fn chat_send(
 }
 
 #[tauri::command]
-fn chat_reset(chat: State<Chat>) {
+fn chat_reset(chat: State<Chat>, code: State<CodeChats>) {
     chat.reset();
+    code.reset(Channel::Chat);
+}
+
+/// One turn on the user's own Claude Code (their account, no API key). The
+/// reply streams in as `code-chat` events; the whole text comes back here.
+#[tauri::command]
+async fn code_chat(
+    app: AppHandle,
+    channel: Channel,
+    prompt: String,
+    attachments: Vec<String>,
+) -> Result<CodeReply, String> {
+    let cwd = match channel {
+        Channel::Library => library::dir(&app)?,
+        // The island's chat isn't about any one project: start from home.
+        Channel::Chat => std::env::var_os("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir),
+    };
+    tauri::async_runtime::spawn_blocking(move || {
+        let chats = app.state::<CodeChats>();
+        claude_code::run_turn(&app, &chats, channel, &prompt, &attachments, &cwd)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn code_chat_reset(code: State<CodeChats>, channel: Channel) {
+    code.reset(channel);
+}
+
+/// The "Suelta tus archivos aquí" zone was clicked: the Windows Open dialog,
+/// then the chosen file is copied into the inbox like a dropped one.
+#[tauri::command]
+async fn pick_file(app: AppHandle) -> Result<Option<DroppedFile>, String> {
+    let owner = island::window(&app).and_then(|w| island::hwnd_of(&w)).map(|h| h.0 as isize);
+    let picked = tauri::async_runtime::spawn_blocking(move || {
+        let owner = owner.map(|raw| windows::Win32::Foundation::HWND(raw as *mut _));
+        win_ui::pick_file(owner, "Elige un archivo para Mochi")
+    })
+    .await
+    .map_err(|e| e.to_string())?;
+    match picked {
+        Some(path) => files::ingest(&path).map(Some),
+        None => Ok(None),
+    }
+}
+
+#[tauri::command]
+fn library_list(app: AppHandle) -> Result<library::Library, String> {
+    library::list(&app)
+}
+
+/// A library item's buttons. `mode`: "copy" (its text), "ref" (`@"path"` for
+/// Claude Code), "warp" (copy + bring Warp up), "paste" (copy + Warp + Ctrl+V).
+/// Nothing ever presses Enter.
+#[tauri::command]
+async fn library_use(
+    app: AppHandle,
+    path: String,
+    kind: String,
+    mode: String,
+    repo: Option<String>,
+) -> Result<(), String> {
+    let kind = match kind.as_str() {
+        "prompt" => library::Kind::Prompt,
+        "script" => library::Kind::Script,
+        _ => library::Kind::Note,
+    };
+    let text = if mode == "ref" {
+        let p = library::inside_library(&app, &path)?;
+        format!("@\"{}\"", library::display_path(&p))
+    } else {
+        library::content_for_copy(&app, &path, kind)?
+    };
+    win_ui::set_clipboard_text(&text)?;
+    let repo = repo.filter(|r| std::path::Path::new(r).is_dir());
+    match mode.as_str() {
+        "warp" => {
+            if !warp::focus_or_launch(repo.as_deref()) {
+                return Err("Copiado. No encontré Warp para traerlo al frente.".into());
+            }
+            Ok(())
+        }
+        "paste" => tauri::async_runtime::spawn_blocking(move || warp::paste(repo.as_deref()))
+            .await
+            .map_err(|e| e.to_string())?,
+        _ => Ok(()),
+    }
+}
+
+/// Opens <Documents>\mochi in Explorer.
+#[tauri::command]
+fn library_open_folder(app: AppHandle) -> Result<(), String> {
+    let dir = library::dir(&app)?;
+    Command::new("explorer").arg(dir).spawn().map(|_| ()).map_err(|e| e.to_string())
+}
+
+/// Seconds since the last keyboard or mouse input, for "you're away" moments.
+#[tauri::command]
+fn idle_seconds() -> u64 {
+    win_ui::idle_seconds()
 }
 
 /// Copies a dropped file into the inbox and reports its name back.
@@ -374,7 +482,15 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Chat::default())
+        .manage(CodeChats::default())
         .invoke_handler(tauri::generate_handler![
+            code_chat,
+            code_chat_reset,
+            pick_file,
+            library_list,
+            library_use,
+            library_open_folder,
+            idle_seconds,
             boot,
             save_settings,
             set_collapsed,

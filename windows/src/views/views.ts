@@ -6,9 +6,10 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask, type AskedQuestion } from "../core/state";
-import { MAX_CARD_ROWS, washRGBA, type IslandViewName, type Wash } from "../core/layout";
+import { MAX_CARD_ROWS, washRGBA, type BotEmoteName, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
+import { buildLibrary } from "./library";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import {
@@ -36,6 +37,8 @@ export interface ViewActions {
   blip(): void;
   /** Puts a Claude Code session on the Warp pill and shows it. */
   selectSession(id: string): void;
+  /** A quick reaction from Mochi (a wink when something is copied…). */
+  emote(e: BotEmoteName): void;
 }
 
 export interface ViewHost {
@@ -45,6 +48,8 @@ export interface ViewHost {
   focus?(): void;
   /** Called every frame while the view is on screen. */
   tick?(nowMs: number): void;
+  /** True while the view is mid-animation and needs more frames to finish it. */
+  animating?(): boolean;
 }
 
 // ── Shared pieces ─────────────────────────────────────────────────────────────
@@ -91,6 +96,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Inicio", onclick: () => go("overview") }, svg(ICONS.house, 13));
   const tabChat = h("button", { class: "tab", title: "Preguntar", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
   const tabDrop = h("button", { class: "tab", title: "Soltar archivo", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabLibrary = h("button", { class: "tab", title: "Biblioteca", onclick: () => go("library") }, svg(ICONS.books, 13));
   const sessionCount = h("span", { class: "tab-count" });
   const tabSessions = h(
     "button",
@@ -110,7 +116,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabLibrary, tabDrop),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -121,6 +127,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabLibrary.classList.toggle("on", v === "library");
       tabSessions.classList.toggle("on", v === "sessions");
       // Only what needs you: a permission or a question. It drops as you answer.
       const pending = State.sessions.filter(isWaiting).length;
@@ -187,6 +194,7 @@ function buildOverview(actions: ViewActions): ViewHost {
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
     },
+    animating: () => mode === "ticker" && ticker.animating,
     sync() {
       const task = State.focusTask;
       if (task?.id !== lastFocus) {
@@ -534,6 +542,61 @@ function buildFinished(actions: ViewActions): ViewHost {
   };
 }
 
+// ── Away ──────────────────────────────────────────────────────────────────────
+
+/**
+ * "Mientras no estabas": back at the keyboard, what moved while you were gone —
+ * what needs you first, then what failed, then what finished. A row takes you
+ * to that session (or straight to its permission card).
+ */
+function buildAway(actions: ViewActions): ViewHost {
+  const who = h("div");
+  const title = h("div", { class: "title one-line", text: "Mientras no estabas" });
+  const rows = h("div", { class: "res" });
+  const row = h("div", { class: "actions" },
+    btn("OK", "primary", () => {
+      State.away = null;
+      actions.collapse();
+    }),
+  );
+  const body = stack(116, 16, who, title, rows, row);
+  body.classList.add("list");
+  const el = h("div", { class: "view" }, card("indigo", body));
+  let key = "";
+  return {
+    el,
+    sync() {
+      const away = State.away;
+      const shown = away?.rows.slice(0, MAX_CARD_ROWS) ?? [];
+      const next = `${away?.minutes}|${shown.map((r) => `${r.sessionId}:${r.status}:${r.detail}`).join("|")}`;
+      if (next === key) return;
+      key = next;
+      clear(who);
+      const more = (away?.rows.length ?? 0) - shown.length;
+      who.append(h("div", { class: "who-row" },
+        h("span", { class: "n", text: "¡Volviste!" }),
+        h("span", { text: `fuera ${away?.minutes ?? 0} min${more > 0 ? ` · ${more} más` : ""}` }),
+      ));
+      clear(rows);
+      for (const r of shown) {
+        rows.append(h("button", {
+          class: "res-row option",
+          title: r.detail,
+          onclick: () => {
+            const approval = State.pendingApproval?.sessionId === r.sessionId;
+            actions.selectSession(r.sessionId);
+            if (approval) actions.setView("approval");
+          },
+        },
+          dot(STATUS_COLORS[r.status], 7),
+          h("b", { text: r.name }),
+          h("span", { text: r.detail }),
+        ));
+      }
+    },
+  };
+}
+
 // ── Confused ──────────────────────────────────────────────────────────────────
 
 function buildConfused(): ViewHost {
@@ -620,7 +683,10 @@ function buildSettings(actions: ViewActions): ViewHost {
         h("span", { text: "Claude Code" }),
       );
       clear(apiBadge);
-      apiBadge.append(dot("#F4505E", 6), h("span", { text: "API" }));
+      apiBadge.append(
+        dot(s.chatEngine === "api" ? "#F5A524" : "#22C55E", 6),
+        h("span", { text: s.chatEngine === "api" ? "Chat · API key" : "Chat · tu cuenta de Claude" }),
+      );
     },
   };
 }
@@ -716,6 +782,8 @@ export function buildViews(
   map.set("settings", buildSettings(actions));
   map.set("sessions", buildSessions(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
+  map.set("library", buildLibrary(actions));
+  map.set("away", buildAway(actions));
   map.set("upload", buildUpload());
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));

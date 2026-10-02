@@ -1,9 +1,15 @@
 // Chat view — DOM port of PromptView / ChatBubble / TypingDotsView from
 // IslandViewContent.swift.
+//
+// It runs on the user's own Claude Code by default (their account, no API key),
+// streaming the reply as it's written; the API key engine is still there for
+// whoever prefers it (Ajustes → Claude → Motor del chat). Files go in through
+// the "Suelta tus archivos aquí" strip and ride along with the next message.
 
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
-import { Bridge, type ChatContext } from "../core/bridge";
+import { buildDropZone } from "./dropzone";
+import { Bridge, onEvent, type ChatContext, type CodeChatEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
 import type { ViewHost } from "./views";
@@ -12,33 +18,28 @@ let nextId = 1;
 
 function bubble(message: ChatMessage): HTMLElement {
   if (message.role === "user") {
+    const b = h("div", { class: "bubble" });
+    if (message.attachment) {
+      b.append(h("span", { class: "bubble-file" }, svg(ICONS.doc, 10), h("span", { text: message.attachment })));
+    }
+    if (message.content) b.append(document.createTextNode(message.content));
+    return h("div", { class: "chat-row user" }, b);
+  }
+  if (!message.content) {
+    // Still waiting for the first words: the dots, and what Claude is up to.
     return h(
       "div",
-      { class: "chat-row user" },
-      h("div", { class: "bubble", text: message.content }),
+      { class: "chat-row" },
+      h("div", { class: "typing" }, h("i"), h("i"), h("i")),
+      message.status ? h("span", { class: "typing-status", text: message.status }) : null,
     );
   }
   return h("div", { class: "chat-row" }, h("div", { class: "reply", text: message.content }));
 }
 
-function typingDots(): HTMLElement {
-  return h(
-    "div",
-    { class: "chat-row" },
-    h("div", { class: "typing" }, h("i"), h("i"), h("i")),
-  );
-}
-
-/** The coloured chip showing what the question is about (a dropped file). */
-function contextChip(label: string): HTMLElement {
-  const chip = h("div", { class: "chip" }, h("i", { class: "chip-dot" }), h("span", { text: label }));
-  requestAnimationFrame(() => chip.classList.add("settled"));
-  return chip;
-}
-
 export function buildPrompt(onHeightChange: () => void): ViewHost {
-  const chipRow = h("div", { class: "chip-row" });
   const log = h("div", { class: "chat-log" });
+  const drop = buildDropZone("chat", ["PDF", "Imágenes", "Código", "Docs"]);
   const input = h("input", {
     type: "text",
     class: "chat-input",
@@ -51,40 +52,65 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   const el = h(
     "div",
     { class: "view" },
-    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, chipRow, log, bar)),
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, log, drop.el, bar)),
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
   let sending = false;
-  let renderedCount = -1;
+  let renderedKey = "";
+  /** The assistant message the stream is writing into. */
+  let streaming: ChatMessage | null = null;
+
+  void onEvent<CodeChatEvent>("code-chat", (e) => {
+    if (e.channel !== "chat" || !streaming) return;
+    if (e.kind === "delta") {
+      streaming.content += e.text;
+      streaming.status = undefined;
+    } else if (!streaming.content) {
+      streaming.status = e.text;
+    }
+    State.notify();
+  });
 
   async function submit() {
     const query = input.value.trim();
-    if (!query || sending) return;
+    const file = State.attachments.chat;
+    if ((!query && !file) || sending) return;
     input.value = "";
     sending = true;
     Sound.play("send", "chat");
 
-    State.chatHistory.push({ id: nextId++, role: "user", content: query });
+    const asked = query || "¿Qué hay en este archivo?";
+    State.chatHistory.push({ id: nextId++, role: "user", content: query, attachment: file?.name });
+    State.attachments.chat = null;
+    const reply: ChatMessage = { id: nextId++, role: "assistant", content: "", status: "Pensando…" };
+    State.chatHistory.push(reply);
+    streaming = reply;
     State.stateOverride = "thinking";
     State.notify();
     onHeightChange();
 
-    const file = State.droppedFile;
-    const context: ChatContext | null =
-      State.chatHistory.length === 1 && file ? { kind: "file", name: file.name, path: file.path } : null;
-
     try {
-      const reply = await Bridge.chatSend(query, context);
-      State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
+      if (State.settings.chatEngine === "api") {
+        const context: ChatContext | null = file ? { kind: "file", name: file.name, path: file.path } : null;
+        const r = await Bridge.chatSend(asked, context);
+        reply.content = r.text;
+      } else {
+        const r = await Bridge.codeChat("chat", asked, file ? [file.path] : []);
+        // The stream already wrote most of it; the final text is the source of truth.
+        reply.content = r.text || reply.content;
+      }
+      reply.status = undefined;
       State.stateOverride = null;
       Sound.play("finish", "chat");
     } catch (err) {
+      State.chatHistory = State.chatHistory.filter((m) => m !== reply);
       State.stateOverride = null;
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
       State.view = "note";
       Sound.play("error", "chat");
     } finally {
+      streaming = null;
       sending = false;
       State.notify();
       onHeightChange();
@@ -104,24 +130,14 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   return {
     el,
     sync() {
-      const file = State.droppedFile;
-      const wantChip = file?.name ?? "";
-      if (chipRow.dataset.label !== wantChip) {
-        chipRow.dataset.label = wantChip;
-        clear(chipRow);
-        if (wantChip) chipRow.append(contextChip(wantChip));
-      }
-
-      const thinking = State.stateOverride === "thinking";
-      const count = State.chatHistory.length + (thinking ? 0.5 : 0);
-      if (count !== renderedCount) {
-        renderedCount = count;
+      drop.sync();
+      const key = State.chatHistory.map((m) => `${m.id}:${m.content.length}:${m.status ?? ""}`).join("|");
+      if (key !== renderedKey) {
+        renderedKey = key;
         clear(log);
         for (const m of State.chatHistory) log.append(bubble(m));
-        if (thinking) log.append(typingDots());
         log.scrollTop = log.scrollHeight;
       }
-
       input.placeholder = State.chatHistory.length === 0 ? "Pregúntame lo que quieras…" : "Continúa…";
       input.disabled = sending;
     },

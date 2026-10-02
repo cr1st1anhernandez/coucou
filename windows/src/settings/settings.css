@@ -292,3 +292,8 @@ select option {
   font-size: 9px;
   color: var(--dim);
 }
+
+.switch.locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}

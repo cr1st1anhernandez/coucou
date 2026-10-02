@@ -9,7 +9,10 @@ import "../src/style.css";
 window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.now()), 16);
 import { State } from "../src/core/state";
 import { Island } from "../src/island/island";
-import { appendStep, makeCurrent, setRateLimited, setStatus, touchSession } from "../src/island/sessions";
+import {
+  appendStep, makeCurrent, recordTodos, setRateLimited, setStatus, startSubagent, stopSubagent, touchSession,
+} from "../src/island/sessions";
+import { setLibraryPreview } from "../src/views/library";
 
 type Scene = (island: Island) => void;
 
@@ -104,6 +107,117 @@ const SCENES: Record<string, Scene> = {
   "rate-free"(island) {
     session("a", "coucou");
     island.announce("Ya se liberó el límite de uso · coucou");
+  },
+  chat(island) {
+    State.chatHistory = [
+      { id: 1, role: "user", content: "¿Qué cambió en el último merge a main?" },
+      { id: 2, role: "assistant", content: "Se quitaron las integraciones que no usabas; quedan GitHub y Warp." },
+    ];
+    State.attachments.chat = { name: "accesos-staging.md", path: "C:\\Users\\dev\\AppData\\Local\\Coucou\\inbox\\accesos-staging.md" };
+    island.alert("prompt");
+  },
+  "chat-empty"(island) {
+    island.alert("prompt");
+  },
+  "chat-streaming"(island) {
+    State.chatHistory = [
+      { id: 1, role: "user", content: "Resume este archivo", attachment: "plan.pdf" },
+      { id: 2, role: "assistant", content: "", status: "Leyendo el archivo…" },
+    ];
+    island.alert("prompt");
+  },
+  library(island) {
+    const base = "C:\\Users\\dev\\Documents\\mochi";
+    const item = (kind: "prompt" | "script" | "note", project: string, file: string, title: string, preview: string) =>
+      ({ kind, title, file, path: `${base}\\${project}\\${file}`, preview, tags: [], order: 1 });
+    setLibraryPreview({
+      dir: base,
+      projects: [
+        {
+          id: "coucou", name: "coucou", color: "#8B5CF6", repo: "C:\\Users\\dev\\Projects\\coucou",
+          items: [
+            item("prompt", "coucou", "revisar-prs.md", "Revisa mis PRs", "Revisa mis PRs abiertos y dime qué falta para mergear cada uno."),
+            item("prompt", "coucou", "tests.md", "Tests y arregla", "Corre tsc y cargo check; arregla lo que falle sin advertencias nuevas."),
+            item("prompt", "coucou", "instalar.md", "Instala desde main", "Sigue la sección Instalar Coucou de coucou-personal.md."),
+            item("script", "coucou", "levantar-entorno.ps1", "levantar entorno", "npm run tauri dev"),
+            item("script", "coucou", "instalar.ps1", "instalar", "npm run tauri build; instalador /S"),
+            item("note", "coucou", "urls.md", "URLs", "Fork, original, Pages"),
+            item("note", "coucou", "accesos-prueba.md", "Accesos de prueba", "demo@coucou.dev / demo1234"),
+          ],
+        },
+        { id: "api-pagos", name: "api-pagos", color: "#22C55E", repo: null, items: [] },
+        { id: "web", name: "web", color: "#F5A524", repo: null, items: [] },
+      ],
+    });
+    island.alert("library");
+    window.setTimeout(() => island["views"].get("library")?.focus?.(), 50);
+  },
+  subagents(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    startSubagent(s, "1", "Explore");
+    startSubagent(s, "2", "general-purpose");
+    makeCurrent(s.id);
+    island.alert("overview");
+    if (location.search.includes("done")) window.setTimeout(() => { stopSubagent(s, "1"); State.notify(); }, 800);
+  },
+  todo(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    recordTodos(s, { todos: [
+      { status: "completed" }, { status: "completed" }, { status: "completed" },
+      { status: "in_progress" }, { status: "pending" }, { status: "pending" }, { status: "pending" },
+    ] });
+    makeCurrent(s.id);
+    island.alert("overview");
+  },
+  "todo-compact"(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    recordTodos(s, { todos: [{ status: "completed" }, { status: "pending" }, { status: "pending" }] });
+    makeCurrent(s.id);
+    State.isPinned = false;
+    island.collapse();
+  },
+  knock(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "question");
+    makeCurrent(s.id);
+    State.isPinned = false;
+    island.collapse();
+    window.setTimeout(() => island.nudge(false), 400);
+  },
+  focus(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    makeCurrent(s.id);
+    island.alert("overview");
+    island.setFocusMode(true);
+    if (location.search.includes("done")) window.setTimeout(() => island.setFocusMode(false, true), 900);
+  },
+  away(island) {
+    const a = session("a", "coucou");
+    a.summary = { files: [{ path: "x.ts", added: 40, removed: 3 }], added: 40, removed: 3, tests: "passed" };
+    setStatus(a, "finished");
+    const b = session("b", "api-pagos");
+    setStatus(b, "error");
+    appendStep(b, "3 tests fallan en checkout.spec.ts");
+    const c = session("c", "web");
+    setStatus(c, "approval");
+    State.away = {
+      minutes: 42,
+      rows: [
+        { sessionId: "c", name: "web", status: "approval", detail: "Espera permiso · npm install zod" },
+        { sessionId: "b", name: "api-pagos", status: "error", detail: "Error · 3 tests fallan en checkout.spec.ts" },
+        { sessionId: "a", name: "coucou", status: "finished", detail: "Terminó · 1 archivo · +40 −3 · tests ✓" },
+      ],
+    };
+    island.showAway();
+  },
+  "library-empty"(island) {
+    setLibraryPreview({ dir: "C:\\Users\\dev\\Documents\\mochi", projects: [] });
+    island.alert("library");
+    window.setTimeout(() => island["views"].get("library")?.focus?.(), 50);
   },
   "finished-empty"(island) {
     const s = session("a", "coucou");
