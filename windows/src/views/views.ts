@@ -5,7 +5,7 @@
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
-import { State, type AgentTask } from "../core/state";
+import { State, type AgentTask, type AskedQuestion } from "../core/state";
 import { MAX_CARD_ROWS, washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -25,6 +25,10 @@ export interface ViewActions {
   openTarget(): void;
   openUrl(url: string): void;
   decide(d: "allow" | "deny"): void;
+  /** Answers the question on the card; the last one sends them all. */
+  answerQuestion(labels: string[]): void;
+  /** Gives the question back to the terminal. */
+  questionToTerminal(): void;
   toggleSound(): void;
   setVolume(v: number): void;
   setAutoClose(seconds: number): void;
@@ -354,20 +358,78 @@ function buildApproval(actions: ViewActions): ViewHost {
 
 // ── Question ──────────────────────────────────────────────────────────────────
 
-function buildQuestion(): ViewHost {
+/**
+ * Claude asks something. When the island holds the request, the options are
+ * rows to click, like the result card's; a multi-select ticks them and sends
+ * with Enviar. Otherwise the question can only be answered in the terminal.
+ */
+function buildQuestion(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title" });
+  const title = h("div", { class: "title two-lines" });
+  const options = h("div", { class: "res" });
   const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("cyan", stack(116, 16, who, title, row)));
+  const body = stack(116, 16, who, title, options, row);
+  const el = h("div", { class: "view" }, card("cyan", body));
+  let key = "";
+  let picked = new Set<string>();
+
+  function draw(q: AskedQuestion, step: number, total: number) {
+    clear(options);
+    for (const o of q.options) {
+      const on = picked.has(o.label);
+      const r = h("button", {
+        class: on ? "res-row option on" : "res-row option",
+        title: o.description || o.label,
+        onclick: () => {
+          if (!q.multiSelect) return actions.answerQuestion([o.label]);
+          if (picked.has(o.label)) picked.delete(o.label);
+          else picked.add(o.label);
+          draw(q, step, total);
+        },
+      },
+        q.multiSelect ? h("i", { class: on ? "tick on" : "tick" }, on ? svg(ICONS.check, 7, { stroke: 3 }) : null) : null,
+        h("b", { text: o.label }),
+        h("span", { text: o.description }),
+      );
+      options.append(r);
+    }
+    clear(row);
+    if (q.multiSelect) {
+      const send = btn(step + 1 < total ? "Siguiente" : "Enviar", "primary", () => {
+        if (picked.size > 0) actions.answerQuestion(q.options.map((o) => o.label).filter((l) => picked.has(l)));
+      });
+      if (picked.size === 0) send.classList.add("off");
+      row.append(send);
+    }
+    row.append(btn("Responder en la terminal", "secondary", () => actions.questionToTerminal()));
+  }
+
   return {
     el,
     sync() {
+      const pq = State.pendingQuestion;
+      const q = pq && pq.sessionId === State.currentSessionId ? pq.questions[pq.step] : null;
+      const next = q && pq ? `${pq.requestId}:${pq.step}` : `plain:${State.focusTask?.steps.at(-1) ?? ""}`;
+      if (next === key) return;
+      key = next;
+      picked = new Set();
       clear(who);
+      if (q && pq) {
+        const total = pq.questions.length;
+        who.append(agentWho(State.focusTask, total > 1 ? `te pregunta · ${pq.step + 1}/${total}` : "te pregunta"));
+        if (q.header) who.firstElementChild?.append(h("span", { class: "chip", text: q.header }));
+        title.textContent = q.question;
+        options.style.display = "";
+        body.classList.add("list");
+        draw(q, pq.step, total);
+        return;
+      }
       who.append(agentWho(State.focusTask, "Claude Code te hace una pregunta"));
-      const task = State.focusTask;
-      title.textContent = task?.steps.at(-1) ?? "Claude necesita una respuesta.";
+      title.textContent = State.focusTask?.steps.at(-1) ?? "Claude necesita una respuesta.";
+      options.style.display = "none";
+      body.classList.remove("list");
       clear(row);
-      row.append(h("div", { class: "sub", text: "Responde en tu terminal — Coucou todavía no puede contestar por ti." }));
+      row.append(h("div", { class: "sub", text: "Responde en tu terminal." }));
     },
   };
 }
@@ -645,7 +707,7 @@ export function buildViews(
   map.set("overview", buildOverview(actions));
   map.set("empty", buildEmpty(actions));
   map.set("approval", buildApproval(actions));
-  map.set("question", buildQuestion());
+  map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("ratelimit", buildRateLimit(actions));
   map.set("finished", buildFinished(actions));

@@ -104,13 +104,16 @@ export function chatPromptHeight(messageCount: number): number {
 /** Most rows a list card (the prototype's result card) shows. */
 export const MAX_CARD_ROWS = 3;
 
+/** Most rows a card ever asks for: four options plus a two-line question. */
+const MAX_ROWS = 5;
+
 /**
  * A card that lists rows grows with them, like the prototype's result card:
  * 262 px for three rows. No rows keeps the view's usual height.
  */
 export function listCardHeight(view: IslandViewName, rows: number): number {
-  const n = Math.min(MAX_CARD_ROWS, rows);
-  return n > 0 ? 172 + n * 30 : VIEW_LAYOUTS[view].height;
+  const n = Math.min(MAX_ROWS, rows);
+  return n > 0 ? Math.min(PANEL_H, 172 + n * 30) : VIEW_LAYOUTS[view].height;
 }
 
 export function islandSize(

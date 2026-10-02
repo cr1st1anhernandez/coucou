@@ -37,6 +37,49 @@ const SCENES: Record<string, Scene> = {
     island.alert("finished");
     island.celebrate();
   },
+  question(island) {
+    const s = session("a", "coucou");
+    State.pendingQuestion = {
+      requestId: "1", sessionId: s.id, step: 0, answers: {},
+      questions: [{
+        question: "¿Qué base de datos usamos para las sesiones?",
+        header: "Base de datos",
+        multiSelect: false,
+        options: [
+          { label: "SQLite", description: "Un archivo, sin servidor" },
+          { label: "Postgres", description: "La que ya usa el backend" },
+          { label: "En memoria", description: "Se pierde al reiniciar" },
+        ],
+      }],
+    };
+    setStatus(s, "question");
+    makeCurrent(s.id);
+    island.alert("question");
+  },
+  "question-multi"(island) {
+    const s = session("a", "coucou");
+    State.pendingQuestion = {
+      requestId: "1", sessionId: s.id, step: 1, answers: { "x": "y" },
+      questions: [
+        { question: "x", header: "", multiSelect: false, options: [{ label: "y", description: "" }] },
+        {
+          question: "¿Qué pruebas corro antes de subir los cambios a la rama de la computadora del trabajo?",
+          header: "Pruebas",
+          multiSelect: true,
+          options: [
+            { label: "tsc", description: "Tipos del front" },
+            { label: "cargo check", description: "Rust" },
+            { label: "cargo test", description: "Pruebas del relay" },
+            { label: "Instalar", description: "Compilar el instalador" },
+          ],
+        },
+      ],
+    };
+    setStatus(s, "question");
+    makeCurrent(s.id);
+    island.alert("question");
+    window.setTimeout(() => (document.querySelectorAll(".view.on .option")[1] as HTMLElement)?.click(), 300);
+  },
   ratelimit(island) {
     const s = session("a", "coucou");
     setRateLimited(s, Date.now() + 82 * 60_000);

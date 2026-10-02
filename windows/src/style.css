@@ -1454,6 +1454,77 @@ input[type="range"]::-webkit-slider-thumb {
   color: #9398a1;
 }
 
+/* Question options: the result rows, clickable. */
+.res-row.option {
+  border: 0;
+  color: inherit;
+  text-align: left;
+  align-items: center;
+  cursor: default;
+  transition: background 0.12s ease-out, transform 0.08s ease-out;
+}
+
+.res-row.option:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.res-row.option:active {
+  transform: scale(0.98);
+}
+
+.res-row.option.on {
+  background: rgba(34, 211, 238, 0.16);
+}
+
+.res-row.option b {
+  flex: 0 1 auto;
+}
+
+.res-row.option span {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: right;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.res-row .tick {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.res-row .tick.on {
+  background: var(--cyan);
+  border-color: var(--cyan);
+  color: #0b0c0e;
+}
+
+.who-row .chip {
+  font: 500 10.5px var(--font);
+  color: var(--cyan);
+  background: rgba(34, 211, 238, 0.14);
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+
+.title.two-lines {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.btn.off {
+  opacity: 0.4;
+}
+
 .summary.fine {
   font-size: 11px;
   color: #6e737c;
