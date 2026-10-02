@@ -27,7 +27,7 @@ export const SOUND_CUES = [
   { id: "rate", label: "Llegaste al límite de uso", sample: "rate", on: true },
   { id: "rateFree", label: "Se liberó el límite de uso", sample: "pop", on: true },
   { id: "meeting", label: "Una reunión está por empezar", sample: "attach", on: true },
-  { id: "github", label: "GitHub: reviews y CI de tus PRs", sample: "blip", on: true },
+  { id: "github", label: "GitHub: reviews y CI de tus PRs", sample: "finish", on: true },
   { id: "integrations", label: "Otras integraciones (deploys, pagos, correos…)", sample: "finish", on: false },
   { id: "chat", label: "Chat con Claude", sample: "send", on: true },
   { id: "drop", label: "Soltar un archivo", sample: "approve", on: true },
