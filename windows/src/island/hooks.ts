@@ -8,8 +8,8 @@ import { Sound } from "../core/sound";
 import { State, type ClaudeSession } from "../core/state";
 import type { Island } from "./island";
 import {
-  appendStep, endSession, isBusy, makeCurrent, recordTool, resetSummary, setNagHandler,
-  setStatus, setStatusById, touchSession,
+  appendStep, endSession, headline, isBusy, makeCurrent, recordTool, resetSummary,
+  setNagHandler, setStatus, setStatusById, touchSession,
 } from "./sessions";
 
 const CLAUDE_ID = "integration_claude";
@@ -23,8 +23,10 @@ interface HookPayload {
   session_id?: string;
   cwd?: string;
   message?: string;
-  /** UserPromptSubmit carries `prompt`; `message` belongs to Notification/Stop. */
+  /** UserPromptSubmit carries `prompt`; `message` belongs to Notification. */
   prompt?: string;
+  /** Stop carries Claude's final reply of the turn. */
+  last_assistant_message?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   /** Added by coucou-hook on PostToolUse for edits, counted before truncation. */
@@ -252,7 +254,11 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "Stop": {
       setStatus(session, "finished");
-      if (payload.message) appendStep(session, payload.message.slice(0, 60));
+      // Stop has no `message`: without the reply the card fell back to the last
+      // tool step, and a turn "ended" on `Ejecuta · cd C:/Users/…`.
+      const said = headline(payload.last_assistant_message ?? "");
+      session.finalMessage = said || null;
+      if (said) appendStep(session, said.slice(0, 60));
       Sound.alert("finish");
       // Show the finished card for this session — unless an approval card is up,
       // or you're watching another session that is still working.

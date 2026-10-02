@@ -93,6 +93,7 @@ export function touchSession(id: string, cwd: string, root?: string | null): Cla
       finishedAt: null,
       waitingSince: null,
       summary: emptySummary(),
+      finalMessage: null,
     };
     State.sessions.push(s);
   }
@@ -313,6 +314,45 @@ function fallbackLines(tool: string, input: Record<string, unknown>): [number, n
 /** Starts a fresh summary: it covers what happened since the last prompt. */
 export function resetSummary(s: ClaudeSession) {
   s.summary = emptySummary();
+  s.finalMessage = null;
+}
+
+/** Longest headline kept; the card ellipsises well before this anyway. */
+const MAX_HEADLINE = 120;
+
+/**
+ * "Listo, agregué la cuenta regresiva. Además…" → "Listo, agregué la cuenta
+ * regresiva." The first real line of Claude's reply, Markdown stripped, cut at
+ * its first sentence. Code and tables are skipped; a heading is only used when
+ * the reply has nothing else.
+ */
+export function headline(text: string): string {
+  let fenced = false;
+  let heading = "";
+  for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+    const trimmed = raw.trim();
+    if (trimmed.startsWith("```")) {
+      fenced = !fenced;
+      continue;
+    }
+    if (fenced || trimmed.startsWith("|")) continue;
+    const line = trimmed
+      .replace(/^(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)/, "")
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/\*\*|__|`/g, "")
+      .trim();
+    if (!line || /^[-:\s]+$/.test(line)) continue;
+    if (/^#{1,6}\s/.test(trimmed)) {
+      heading ||= line;
+      continue;
+    }
+    return clip(line.match(/^.+?[.!?…](?=\s|$)/)?.[0] ?? line);
+  }
+  return clip(heading);
+}
+
+function clip(text: string): string {
+  return text.length > MAX_HEADLINE ? `${text.slice(0, MAX_HEADLINE - 1)}…` : text;
 }
 
 /** PostToolUse (ok) / PostToolUseFailure (!ok) → files, lines, tests. */

@@ -408,8 +408,8 @@ function buildFinished(actions: ViewActions): ViewHost {
     sync() {
       clear(who);
       who.append(agentWho(State.focusTask, "Claude Code terminó"));
-      title.textContent = State.focusTask?.steps.at(-1) ?? "Sesión terminada";
       const session = State.currentSession;
+      title.textContent = session?.finalMessage || "Sesión terminada";
       summary.textContent = session ? summaryText(session.summary) : "";
     },
   };
