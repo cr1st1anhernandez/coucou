@@ -13,7 +13,8 @@
 //   * whatever happens we drop the connection after the decision timeout, and
 //     the terminal takes over.
 //
-// What we write back is the bare word `allow` or `deny`. Turning that into the
+// What we write back is the bare word `allow` or `deny`, or for a question
+// `answers {"<question>": "<label>"}` on one line. Turning that into the
 // documented hookSpecificOutput JSON is coucou-hook's job, so the wire format
 // Claude Code expects lives in exactly one place.
 
@@ -44,7 +45,7 @@ const MAX_PAYLOAD: usize = 1 << 20;
 pub enum Reply {
     /// The card is on screen and a human can act on it.
     Ack,
-    /// A human clicked: `allow` or `deny`.
+    /// A human clicked: `allow`, `deny`, or `answers {…}` for a question.
     Decision(String),
     /// Nobody can act on it — paused, or another request already holds the card.
     Decline,
@@ -160,7 +161,7 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
         Ok(Some(Reply::Ack)) => {}
         // A click that beats the ack is still a click.
         Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {d}"));
+            log::line(format!("hook id={id} answered {}", verb(&d)));
             return Some(d);
         }
         Ok(Some(Reply::Decline)) => {
@@ -176,7 +177,7 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
 
     match tokio::time::timeout(DECISION_TIMEOUT, rx.recv()).await {
         Ok(Some(Reply::Decision(d))) => {
-            log::line(format!("hook id={id} answered {d}"));
+            log::line(format!("hook id={id} answered {}", verb(&d)));
             Some(d)
         }
         Ok(Some(Reply::Decline)) => {
@@ -188,6 +189,11 @@ async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<S
             None
         }
     }
+}
+
+/// `allow`, `deny` or `answers` — never what the answers say, which stays out of the log.
+fn verb(decision: &str) -> &str {
+    decision.split_whitespace().next().unwrap_or_default()
 }
 
 fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
@@ -224,4 +230,12 @@ pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
     };
     log::line(format!("decision id={request_id} {word}"));
     send(app, request_id, Reply::Decision(word.to_string()), false);
+}
+
+/// The island answered an AskUserQuestion: question text → chosen label(s).
+/// serde_json escapes any newline, so it always travels as one line.
+pub fn answer_question(app: &AppHandle, request_id: &str, answers: &HashMap<String, String>) {
+    let Ok(json) = serde_json::to_string(answers) else { return };
+    log::line(format!("decision id={request_id} answers ({} question(s))", answers.len()));
+    send(app, request_id, Reply::Decision(format!("answers {json}")), false);
 }

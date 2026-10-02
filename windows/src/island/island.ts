@@ -20,6 +20,7 @@ import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../vie
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { makeCurrent, rescheduleNags, setStatusById } from "./sessions";
+import { dropQuestionCard } from "./hooks";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -150,6 +151,32 @@ export class Island {
         setStatusById(req.sessionId, "working");
         State.setPillBadge("integration_claude", null);
         this.setView(State.defaultView());
+      },
+      answerQuestion: (labels) => {
+        const pq = State.pendingQuestion;
+        const q = pq?.questions[pq.step];
+        if (!pq || !q || labels.length === 0) return;
+        pq.answers[q.question] = labels.join(", ");
+        Sound.play("approve");
+        if (pq.step + 1 < pq.questions.length) {
+          pq.step += 1;
+          State.notify();
+          return;
+        }
+        void Bridge.log(`answer req=${pq.requestId} (${pq.questions.length} question(s))`);
+        void Bridge.questionAnswer(pq.requestId, pq.answers);
+        dropQuestionCard(this);
+        setStatusById(pq.sessionId, "working");
+        State.setPillBadge("integration_claude", null);
+        this.setView(State.defaultView());
+      },
+      questionToTerminal: () => {
+        const pq = State.pendingQuestion;
+        if (!pq) return;
+        Sound.play("blip");
+        void Bridge.approvalDecline(pq.requestId);
+        dropQuestionCard(this);
+        this.collapse();
       },
       toggleSound: () => {
         State.settings.soundEnabled = !State.settings.soundEnabled;
@@ -497,6 +524,12 @@ export class Island {
   /** Rows of the list card on screen, which sets its height. */
   private cardRows(): number {
     if (State.view === "finished") return Math.min(MAX_CARD_ROWS, State.currentSession?.summary.files.length ?? 0);
+    if (State.view === "question") {
+      const pq = State.pendingQuestion;
+      const q = pq && pq.sessionId === State.currentSessionId ? pq.questions[pq.step] : null;
+      // A long question wraps onto a second line: one more row of room.
+      return q ? q.options.length + (q.question.length > 58 ? 1 : 0) : 0;
+    }
     return 0;
   }
 

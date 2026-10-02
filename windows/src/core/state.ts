@@ -77,6 +77,31 @@ export interface ApprovalInfo {
   command: string;
 }
 
+/** One option of an AskUserQuestion question. */
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+/** One question of an AskUserQuestion call. */
+export interface AskedQuestion {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+/** An AskUserQuestion the island can answer, one question at a time. */
+export interface PendingQuestion {
+  requestId: string;
+  sessionId: string;
+  questions: AskedQuestion[];
+  /** Index of the question on screen. */
+  step: number;
+  /** Question text → chosen label(s), joined with ", " for a multi-select. */
+  answers: Record<string, string>;
+}
+
 export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
@@ -192,6 +217,7 @@ class AppState {
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
   pendingApproval: ApprovalInfo | null = null;
+  pendingQuestion: PendingQuestion | null = null;
 
   /** Live Claude Code sessions, most recent activity first. */
   sessions: ClaudeSession[] = [];

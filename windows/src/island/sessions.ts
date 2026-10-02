@@ -146,7 +146,7 @@ function pruneStale(now: number) {
  * card is up: the card would otherwise show one name and answer for another.
  */
 export function makeCurrent(id: string, force = false): boolean {
-  const approval = State.pendingApproval;
+  const approval = State.pendingApproval ?? State.pendingQuestion;
   if (!force && approval && approval.sessionId && approval.sessionId !== id) return false;
   if (!State.sessions.some((s) => s.id === id)) return false;
   State.currentSessionId = id;

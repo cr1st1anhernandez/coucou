@@ -77,6 +77,9 @@ export const Bridge = {
 
   approvalDecision: (requestId: string, decision: "allow" | "deny") =>
     call<void>("approval_decision", { requestId, decision }),
+  /** An AskUserQuestion answered from the island: question text → chosen label(s). */
+  questionAnswer: (requestId: string, answers: Record<string, string>) =>
+    call<void>("question_answer", { requestId, answers }),
   /** "The card is up" — until this lands the relay only waits a moment. */
   approvalAck: (requestId: string) => call<void>("approval_ack", { requestId }),
   /** "Nobody can act on this" — Claude Code asks in the terminal right away. */

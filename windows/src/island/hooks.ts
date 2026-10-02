@@ -5,7 +5,7 @@
 
 import { Bridge, onEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
-import { State, type ClaudeSession } from "../core/state";
+import { State, type AskedQuestion, type ClaudeSession } from "../core/state";
 import type { Island } from "./island";
 import {
   appendStep, endSession, headline, isBusy, makeCurrent, parseResetTime, recordTool,
@@ -17,6 +17,8 @@ const CLAUDE_ID = "integration_claude";
 
 /** Clears the approval card if no decision was made before the hook gave up. */
 let pendingTimeout: number | null = null;
+/** Same, for a question the island could answer. */
+let questionTimeout: number | null = null;
 
 interface HookPayload {
   hook_event_name?: string;
@@ -119,6 +121,32 @@ function firstQuestion(input: Record<string, unknown>): string {
   return typeof q === "string" ? q : "Claude tiene una pregunta";
 }
 
+/** The questions an AskUserQuestion carries, ready for the island's card. */
+function parseQuestions(input: Record<string, unknown>): AskedQuestion[] {
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const list = Array.isArray(input.questions) ? (input.questions as Record<string, unknown>[]) : [];
+  return list
+    .map((q) => ({
+      question: str(q.question),
+      header: str(q.header),
+      multiSelect: q.multiSelect === true,
+      options: (Array.isArray(q.options) ? (q.options as Record<string, unknown>[]) : [])
+        .map((o) => ({ label: str(o.label), description: str(o.description) }))
+        .filter((o) => o.label),
+    }))
+    .filter((q) => q.question && q.options.length > 0);
+}
+
+/** The question card stops answering: the terminal has it now. */
+export function dropQuestionCard(island: Island) {
+  if (questionTimeout != null) window.clearTimeout(questionTimeout);
+  questionTimeout = null;
+  if (!State.pendingQuestion) return;
+  State.pendingQuestion = null;
+  State.isPinned = false;
+  island.dropPin();
+}
+
 export function registerHookHandlers(island: Island) {
   setNagHandler((session) => nag(island, session));
   setRateFreeHandler((session) => rateFreed(island, session));
@@ -193,7 +221,16 @@ function handleHook(island: Island, payload: HookPayload) {
   /** Nothing else is holding the pill: no approval card, no other busy session on it. */
   const pillFree = () =>
     !State.pendingApproval &&
+    (!State.pendingQuestion || State.pendingQuestion.sessionId === session.id) &&
     (State.currentSessionId === session.id || !isBusy(State.currentSession));
+
+  // The session moved on — answered in the terminal, or closed: the island's
+  // question card has nothing left to answer.
+  const pq = State.pendingQuestion;
+  if (pq && pq.sessionId === session.id && name !== "PermissionRequest" && name !== "PreToolUse" &&
+    name !== "Notification") {
+    dropQuestionCard(island);
+  }
 
   /** Alerts force the island open; work events only reveal the compact island. */
   const surface = (view: Parameters<Island["alert"]>[0], isAlert: boolean) => {
@@ -345,17 +382,44 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "PermissionRequest": {
       const requestId = payload.request_id ?? "";
-      // A question isn't a permission: Allow/Deny can't answer it. Let the
-      // terminal show it right away and flag it as a question instead.
+      // A question isn't a permission: the card offers its options instead of
+      // Allow/Deny, and the chosen ones go back as the tool's answers. While it
+      // waits the terminal doesn't show the question; "Responder en la terminal"
+      // or the timeout hands it over.
       if (payload.tool_name === ASK_TOOL) {
-        if (requestId) void Bridge.approvalDecline(requestId);
-        asks(firstQuestion(payload.tool_input ?? {}));
+        const questions = parseQuestions(payload.tool_input ?? {});
+        const taken = State.pendingApproval ||
+          (State.pendingQuestion && State.pendingQuestion.requestId !== requestId);
+        if (!requestId || taken || questions.length === 0) {
+          if (requestId) void Bridge.approvalDecline(requestId);
+          asks(firstQuestion(payload.tool_input ?? {}));
+          break;
+        }
+        if (questionTimeout != null) window.clearTimeout(questionTimeout);
+        State.pendingQuestion = { requestId, sessionId: session.id, questions, step: 0, answers: {} };
+        makeCurrent(session.id, true);
+        void Bridge.approvalAck(requestId);
+        asks(questions[0].question);
+        State.isPinned = true;
+        if (focused) {
+          island.alert("question");
+        } else {
+          State.setPillBadge(CLAUDE_ID, "approval");
+          island.reveal();
+        }
+        questionTimeout = window.setTimeout(() => {
+          questionTimeout = null;
+          if (State.pendingQuestion?.requestId !== requestId) return;
+          // Still a question — in the terminal now.
+          dropQuestionCard(island);
+          State.notify();
+        }, 110_000);
         break;
       }
       // One card, one request. A second one must never quietly replace the first
       // — that would leave a human staring at request B while request A waits for
       // a decision nobody can give. Hand it straight back to the terminal.
-      if (State.pendingApproval && State.pendingApproval.requestId !== requestId) {
+      if ((State.pendingApproval && State.pendingApproval.requestId !== requestId) || State.pendingQuestion) {
         if (requestId) void Bridge.approvalDecline(requestId);
         break;
       }
