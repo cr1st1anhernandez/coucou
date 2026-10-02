@@ -9,7 +9,7 @@ import "../src/style.css";
 window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.now()), 16);
 import { State } from "../src/core/state";
 import { Island } from "../src/island/island";
-import { appendStep, makeCurrent, setStatus, touchSession } from "../src/island/sessions";
+import { appendStep, makeCurrent, setRateLimited, setStatus, touchSession } from "../src/island/sessions";
 
 type Scene = (island: Island) => void;
 
@@ -36,6 +36,16 @@ const SCENES: Record<string, Scene> = {
     makeCurrent(s.id);
     island.alert("finished");
     island.celebrate();
+  },
+  ratelimit(island) {
+    const s = session("a", "coucou");
+    setRateLimited(s, Date.now() + 82 * 60_000);
+    makeCurrent(s.id);
+    island.alert("ratelimit");
+  },
+  "rate-free"(island) {
+    session("a", "coucou");
+    island.announce("Ya se liberó el límite de uso · coucou");
   },
   "finished-empty"(island) {
     const s = session("a", "coucou");
