@@ -39,6 +39,12 @@ const MODE_BUTTONS: { mode: LibraryMode; key: "copy" | "warp" | "paste"; label: 
   { mode: "paste", key: "paste", label: "Pegar en Warp", icon: ICONS.paste, done: "Pegado en Warp · el Enter lo das tú" },
 ];
 
+/** The dev preview (dev/island-preview.ts) shows made-up projects outside Coucou. */
+let previewData: LibraryData | null = null;
+export function setLibraryPreview(data: LibraryData) {
+  previewData = data;
+}
+
 function iconBtn(path: string, title: string, onClick: () => void, filled = false): HTMLElement {
   return h(
     "button",
@@ -119,7 +125,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     if (loading) return;
     loading = true;
     try {
-      data = await Bridge.libraryList();
+      data = previewData ?? (await Bridge.libraryList());
       if (!data.projects.some((p) => p.id === current)) current = data.projects[0]?.id ?? null;
     } catch (err) {
       say(String(err).replace(/^Error:\s*/, ""), "err");
