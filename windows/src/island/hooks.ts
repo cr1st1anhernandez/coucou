@@ -124,7 +124,8 @@ function nag(island: Island, session: ClaudeSession) {
   // Show the session that needs you, unless an approval card already owns the pill.
   makeCurrent(session.id);
   if (State.focusId !== CLAUDE_ID) State.setPillBadge(CLAUDE_ID, "approval");
-  island.nudge();
+  // Only a pending question chimes; a permission reminder stays silent.
+  island.nudge(session.status === "question");
   State.notify();
 }
 
@@ -182,7 +183,7 @@ function handleHook(island: Island, payload: HookPayload) {
     setStatus(session, "question");
     if (question) appendStep(session, question.slice(0, 120));
     if (already) return;
-    Sound.play("question");
+    Sound.alert("question");
     const free = pillFree();
     if (free) makeCurrent(session.id);
     if (focused && free) {
@@ -250,7 +251,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "Stop": {
       setStatus(session, "finished");
       if (payload.message) appendStep(session, payload.message.slice(0, 60));
-      Sound.play("finish");
+      Sound.alert("finish");
       // Show the finished card for this session — unless an approval card is up,
       // or you're watching another session that is still working.
       const free = pillFree();

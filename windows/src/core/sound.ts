@@ -84,7 +84,15 @@ class SoundEngine {
     this.enabled = on;
   }
 
-  play(name: SoundName | string) {
+  /**
+   * Every other sound (UI, Mochi, chat, integrations, approvals) stays silent:
+   * this fork only chimes when a Claude Code session finishes or asks you
+   * something. The calls are kept so upstream merges stay painless.
+   */
+  play(_name: SoundName | string) {}
+
+  /** The only sounds that play: a session finished, or it asked you a question. */
+  alert(name: "finish" | "question") {
     if (!this.enabled) return;
     const ctx = this.ctx;
     const master = this.master;

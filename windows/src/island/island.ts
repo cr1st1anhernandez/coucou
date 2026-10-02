@@ -350,9 +350,9 @@ export class Island {
    * A Claude Code session has been waiting on you too long: Mochi startles,
    * fidgets, and the island peeks out so you notice even from another window.
    */
-  nudge() {
+  nudge(chime: boolean) {
     Sound.resume();
-    Sound.play("question");
+    if (chime) Sound.alert("question");
     this.engine.squash();
     this.engine.triggerEmote("surprised", 1);
     window.setTimeout(() => this.engine.doRoll(700, 1), 350);
