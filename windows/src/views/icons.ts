@@ -38,4 +38,22 @@ export const ICONS = {
   stack: "M5 8h14v11.5H5V8zm1.8-3h10.4v1.6H6.8V5zm1.6-2.6h7.2V4H8.4V2.4z",
   // doc.text
   doc: "M6.5 2.6h7l4 4v14.8h-11V2.6zm6.6 1.6v3.3h3.3l-3.3-3.3zM8.6 11h6.8v1.5H8.6V11zm0 3.4h6.8v1.5H8.6v-1.5z",
+  // books.vertical.fill — the library tab
+  books: "M4 3.5h4v17H4v-17zm5.5 0h4v17h-4v-17zm5.6 1.2 3.7-1 4.3 16.2-3.7 1-4.3-16.2z",
+  // sparkles — "Ordenar con Claude"
+  sparkles: "M10 3l1.9 5.1L17 10l-5.1 1.9L10 17l-1.9-5.1L3 10l5.1-1.9L10 3zm8 11l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14z",
+
+  // The ones below are outlines: draw them with svg(path, size, { stroke: 2 }).
+  // square.and.arrow.up — the drop zone's call to action
+  upload: "M12 15V4M7.5 8.5 12 4l4.5 4.5M5 13.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-5.5",
+  // doc.on.doc
+  copy: "M9 8.5h9.5a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1zM5 15.5V4a1 1 0 0 1 1-1h9.5",
+  // terminal — "A Warp"
+  terminal: "M4.5 5.5h15A1.5 1.5 0 0 1 21 7v10a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17V7a1.5 1.5 0 0 1 1.5-1.5zM7 9.5l2.8 2.5L7 14.5M12 15h5",
+  // clipboard + arrow — "Pegar en Warp"
+  paste: "M9 4.5h6M8 4.5H6.5A1.5 1.5 0 0 0 5 6v13.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H16M9 3h6v3H9zM12 10v7M9 14l3 3 3-3",
+  // at — "@ruta" for Claude Code
+  at: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zm0 0v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.2",
+  // folder
+  folder: "M3.5 6.5A1.5 1.5 0 0 1 5 5h4.4l2 2.2H19a1.5 1.5 0 0 1 1.5 1.5v9.3A1.5 1.5 0 0 1 19 19.5H5a1.5 1.5 0 0 1-1.5-1.5z",
 } as const;

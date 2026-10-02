@@ -23,6 +23,7 @@ export type IslandViewName =
   | "note"
   | "settings"
   | "sessions"
+  | "library"
   | "greeting";
 
 export type BotStateName =
@@ -89,6 +90,8 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
   settings: { height: 160, botX: 54, botY: null, botDiameter: 46, agentMode: "none" },
   sessions: { height: 200, botX: 50, botY: null, botDiameter: 42, agentMode: "none" },
+  // The library takes the whole panel; Mochi sits small beside the project tabs.
+  library: { height: 320, botX: 36, botY: 64, botDiameter: 26, agentMode: "none" },
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
 };
 
@@ -98,7 +101,8 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
 
 /** Chat view grows with the conversation — IslandContainer.chatPromptHeight. */
 export function chatPromptHeight(messageCount: number): number {
-  return Math.min(300, 240 + messageCount * 40);
+  // 256: room for the "Suelta tus archivos aquí" strip above the input.
+  return Math.min(PANEL_H, 256 + messageCount * 40);
 }
 
 /** Most rows a list card (the prototype's result card) shows. */

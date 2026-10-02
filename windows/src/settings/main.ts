@@ -244,14 +244,95 @@ function apiSection(hasKey: boolean): HTMLElement {
 
   clearBtn.style.display = hasKey ? "" : "none";
 
+  const engine = h("select", {}) as HTMLSelectElement;
+  engine.append(
+    h("option", { value: "claudeCode", text: "Mi cuenta de Claude (vía Claude Code)" }),
+    h("option", { value: "api", text: "API key" }),
+  );
+  engine.value = settings.chatEngine;
+  const apiRows = [
+    h("div", { class: "row" }, h("label", { text: "API key" }), field, saveBtn, clearBtn),
+    h("div", { class: "row" }, h("label", { text: "Modelo" }), model),
+  ];
+  const engineHint = h("span", { class: "hint" });
+  function showEngine() {
+    const api = settings.chatEngine === "api";
+    for (const r of apiRows) r.style.display = api ? "" : "none";
+    state.style.display = api ? "" : "none";
+    dot.style.display = api ? "" : "none";
+    engineHint.textContent = api
+      ? "El chat usa tu API key y el modelo de abajo."
+      : "El chat usa el Claude Code instalado, con tu cuenta (Pro, Max…) y sus conectores. Solo lee: no cambia archivos ni envía nada.";
+  }
+  engine.addEventListener("change", () => {
+    settings.chatEngine = engine.value as Settings["chatEngine"];
+    showEngine();
+    void save();
+  });
+  showEngine();
+
   return h(
     "section",
     {},
     h("h2", {}, dot, h("span", { text: "Claude" })),
+    h("div", { class: "row" }, h("label", { text: "Motor del chat" }), engine),
+    engineHint,
     state,
-    h("div", { class: "row" }, h("label", { text: "API key" }), field, saveBtn, clearBtn),
-    h("div", { class: "row" }, h("label", { text: "Modelo" }), model),
+    ...apiRows,
     feedback,
+  );
+}
+
+// ── Library section ───────────────────────────────────────────────────────────
+
+/**
+ * How the library's buttons take a prompt to the terminal. Any mix of the
+ * three, but never none: the last one on can't be switched off.
+ */
+function librarySection(): HTMLElement {
+  const MODES: { key: keyof Settings["pasteModes"]; label: string; hint: string }[] = [
+    { key: "copy", label: "Copiar", hint: "Lo deja en el portapapeles." },
+    { key: "warp", label: "A Warp", hint: "Copia y trae Warp al frente; tú pegas." },
+    { key: "paste", label: "Pegar en Warp", hint: "Copia, trae Warp y pega por ti. Nunca presiona Enter." },
+  ];
+  const note = h("div", { class: "hint" });
+  const switches: HTMLElement[] = [];
+  function refresh() {
+    const on = MODES.filter((m) => settings.pasteModes[m.key]);
+    MODES.forEach((m, i) => {
+      // The last one standing is locked on.
+      const locked = on.length === 1 && settings.pasteModes[m.key];
+      switches[i].classList.toggle("locked", locked);
+      switches[i].title = locked ? "Tiene que quedar al menos una activa" : "";
+    });
+    note.textContent = "Botones que aparecen en cada prompt y script de la biblioteca. Al menos uno queda activo.";
+  }
+  const rows = MODES.map((m) => {
+    const sw = h("button", { class: settings.pasteModes[m.key] ? "switch on" : "switch" });
+    sw.addEventListener("click", () => {
+      const next = !settings.pasteModes[m.key];
+      const others = MODES.filter((x) => x.key !== m.key && settings.pasteModes[x.key]).length;
+      if (!next && others === 0) return;
+      settings.pasteModes = { ...settings.pasteModes, [m.key]: next };
+      sw.classList.toggle("on", next);
+      refresh();
+      void save();
+    });
+    switches.push(sw);
+    return h("div", { class: "row" }, h("label", { text: m.label }), sw, h("span", { class: "hint", text: m.hint }));
+  });
+  refresh();
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Biblioteca" })),
+    h("div", { class: "hint", text: "Tus prompts, scripts y notas viven en la carpeta Documentos\\mochi de este usuario." }),
+    h("div", { class: "row" },
+      h("label", { text: "Carpeta" }),
+      h("button", { text: "Abrir Documentos\\mochi", onclick: () => void Bridge.libraryOpenFolder() }),
+    ),
+    note,
+    ...rows,
   );
 }
 
@@ -493,6 +574,7 @@ async function main() {
     h("h1", {}, h("span", { text: "Coucou" }), h("span", { class: "version", text: version })),
     claudeSection(status),
     apiSection(hasKey),
+    librarySection(),
     integrationsSection(present),
     generalSection(),
     soundsSection(),

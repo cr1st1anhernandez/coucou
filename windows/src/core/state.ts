@@ -106,6 +106,23 @@ export interface ChatMessage {
   id: number;
   role: "user" | "assistant";
   content: string;
+  /** Name of the file sent with this message. */
+  attachment?: string;
+  /** What Claude is doing while the reply is still empty ("Leyendo el archivo…"). */
+  status?: string;
+}
+
+/** A file waiting to go out with the next message of a chat. */
+export interface Attachment {
+  name: string;
+  path: string;
+}
+
+/** The library's ways of taking a prompt to the terminal (at least one is on). */
+export interface PasteModes {
+  copy: boolean;
+  warp: boolean;
+  paste: boolean;
 }
 
 export type PromptContext =
@@ -161,6 +178,9 @@ export interface Settings {
   waitingAlertMinutes: number;
   /** Per-cue sound switches (SOUND_CUES); a missing cue uses its default. */
   soundCues: Record<string, boolean>;
+  /** The chat runs on the user's Claude Code (their account) or on an API key. */
+  chatEngine: "claudeCode" | "api";
+  pasteModes: PasteModes;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -175,6 +195,8 @@ export const DEFAULT_SETTINGS: Settings = {
   model: "claude-opus-5",
   waitingAlertMinutes: 2,
   soundCues: {},
+  chatEngine: "claudeCode",
+  pasteModes: { copy: true, warp: true, paste: false },
 };
 
 type Listener = () => void;
@@ -205,6 +227,8 @@ class AppState {
   noteMessage: string | null = null;
   searchResult: SearchResult | null = null;
   chatHistory: ChatMessage[] = [];
+  /** Files picked or dropped onto a chat, waiting for its next message. */
+  attachments: { chat: Attachment | null; library: Attachment | null } = { chat: null, library: null };
   pendingApproval: ApprovalInfo | null = null;
   pendingQuestion: PendingQuestion | null = null;
 

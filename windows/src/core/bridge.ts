@@ -90,6 +90,25 @@ export const Bridge = {
   chatSend: (query: string, context: ChatContext | null) =>
     callOrThrow<{ text: string }>("chat_send", { query, context }),
   chatReset: () => call<void>("chat_reset"),
+  /**
+   * One turn on the user's own Claude Code (their account, no API key). The
+   * reply also streams in as `code-chat` events while it's being written.
+   */
+  codeChat: (channel: CodeChannel, prompt: string, attachments: string[]) =>
+    callOrThrow<{ text: string }>("code_chat", { channel, prompt, attachments }),
+  codeChatReset: (channel: CodeChannel) => call<void>("code_chat_reset", { channel }),
+  /** The Windows Open dialog; the file is copied into the inbox. Null on cancel. */
+  pickFile: () => callOrThrow<DroppedFile | null>("pick_file"),
+
+  // ── Library (<Documents>\mochi) ───────────────────────────────────────────
+  libraryList: () => callOrThrow<LibraryData>("library_list"),
+  /** "copy" its text, "ref" `@"path"`, "warp" copy + Warp, "paste" copy + Warp + Ctrl+V. */
+  libraryUse: (path: string, kind: LibraryKind, mode: LibraryMode, repo: string | null) =>
+    callOrThrow<void>("library_use", { path, kind, mode, repo }),
+  libraryOpenFolder: () => call<void>("library_open_folder"),
+
+  /** Seconds since the last keyboard or mouse input anywhere. */
+  idleSeconds: () => call<number>("idle_seconds"),
   /** Copies a dropped file into the inbox. */
   ingestFile: (path: string) => callOrThrow<DroppedFile>("ingest_file", { path }),
   /** Only ever tells you whether a key exists — never its value. */
@@ -119,6 +138,41 @@ export interface DroppedFile {
   name: string;
   path: string;
   size: number;
+}
+
+export type CodeChannel = "chat" | "library";
+
+/** A `code-chat` event: more reply text, or what Claude is doing right now. */
+export interface CodeChatEvent {
+  channel: CodeChannel;
+  kind: "delta" | "status";
+  text: string;
+}
+
+export type LibraryKind = "prompt" | "script" | "note";
+export type LibraryMode = "copy" | "ref" | "warp" | "paste";
+
+export interface LibraryItem {
+  kind: LibraryKind;
+  title: string;
+  file: string;
+  path: string;
+  preview: string;
+  tags: string[];
+  order: number;
+}
+
+export interface LibraryProject {
+  id: string;
+  name: string;
+  color: string | null;
+  repo: string | null;
+  items: LibraryItem[];
+}
+
+export interface LibraryData {
+  dir: string;
+  projects: LibraryProject[];
 }
 
 export interface HookStatus {

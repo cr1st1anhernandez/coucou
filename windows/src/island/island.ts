@@ -198,6 +198,10 @@ export class Island {
         State.setFocus("integration_claude");
         this.setView("overview");
       },
+      emote: (e) => {
+        this.engine.triggerEmote(e, 1.2);
+        this.ensureRunning();
+      },
     };
 
     this.wakeStrip = h("div", { id: "wake-strip" });
@@ -407,9 +411,23 @@ export class Island {
 
   // ── File drop ───────────────────────────────────────────────────────────────
 
+  /** The chat a file dropped on the island right now would go to, if one is up. */
+  private get dropChat(): "chat" | "library" | null {
+    if (State.mode !== "expanded") return null;
+    if (State.view === "prompt") return "chat";
+    if (State.view === "library") return "library";
+    return null;
+  }
+
   private onDragDrop(e: { type: string; paths?: string[] }) {
     if (e.type !== "over") void Bridge.log(`drag ${e.type} ${e.paths?.length ?? 0} file(s)`);
     if (State.paused) return;
+    // A chat is open: the file is attached to it, no swallowing sequence.
+    const chat = this.dropChat;
+    if (chat) {
+      this.dropOnChat(chat, e);
+      return;
+    }
     switch (e.type) {
       case "enter":
       case "over": {
@@ -445,6 +463,48 @@ export class Island {
     }
   }
 
+  /** A file dragged onto an open chat lights up its drop strip and attaches there. */
+  private dropOnChat(chat: "chat" | "library", e: { type: string; paths?: string[] }) {
+    switch (e.type) {
+      case "enter":
+      case "over":
+        if (State.fileDragOver) return;
+        State.fileDragOver = true;
+        this.engine.triggerEmote("surprised", 0.8);
+        State.notify();
+        break;
+      case "leave":
+        State.fileDragOver = false;
+        State.notify();
+        break;
+      case "drop": {
+        State.fileDragOver = false;
+        const path = e.paths?.[0];
+        State.notify();
+        if (!path) return;
+        this.engine.gulp();
+        Sound.play("approve", "drop");
+        void Bridge.ingestFile(path)
+          .then((file) => {
+            State.attachments[chat] = { name: file.name, path: file.path };
+            this.engine.triggerEmote("happy");
+            State.notify();
+          })
+          .catch((err) => {
+            const back = State.view;
+            State.noteMessage = String(err).replace(/^Error:\s*/, "");
+            Sound.play("error", "drop");
+            this.setView("note");
+            window.setTimeout(() => {
+              if (State.view === "note") this.setView(back);
+            }, 2400);
+          });
+        this.ensureRunning();
+        break;
+      }
+    }
+  }
+
   /**
    * Mochi eats the file. Nothing here waits on the file system: the copy into
    * the inbox runs in the background and swaps the path in when it lands, so a
@@ -454,6 +514,7 @@ export class Island {
     const name = path.split(/[\\/]/).pop() || "file";
     State.droppedFile = { name, path };
     State.promptContext = { kind: "file", name, path };
+    State.attachments.chat = { name, path };
     State.chatHistory = [];
     void Bridge.chatReset();
 
@@ -474,6 +535,7 @@ export class Island {
       .then((file) => {
         State.droppedFile = { name: file.name, path: file.path };
         State.promptContext = { kind: "file", name: file.name, path: file.path };
+        if (State.attachments.chat?.path === path) State.attachments.chat = { name: file.name, path: file.path };
         State.notify();
       })
       .catch((err) => {
@@ -925,14 +987,16 @@ export class Island {
       if (on) view.sync();
     }
 
-    // The chat is the only view with a text field, so it is the only time the
-    // island is allowed to take keyboard focus.
+    // The two chats are the only views with a text field, so they are the only
+    // time the island is allowed to take keyboard focus.
     if (this.lastSyncedView !== State.view) {
-      const wasChat = this.lastSyncedView === "prompt";
+      const typing = (v: IslandViewName | null) => v === "prompt" || v === "library";
+      const wasChat = typing(this.lastSyncedView);
       this.lastSyncedView = State.view;
-      if (State.view === "prompt") {
+      if (typing(State.view)) {
+        const view = State.view;
         void Bridge.focusWindow(true);
-        window.setTimeout(() => this.views.get("prompt")?.focus?.(), 120);
+        window.setTimeout(() => this.views.get(view)?.focus?.(), 120);
       } else if (wasChat) {
         void Bridge.focusWindow(false);
       }

@@ -9,7 +9,7 @@ import { State } from "../core/state";
 import type { ViewActions, ViewHost } from "./views";
 
 /** Dashed rounded rect drawn as SVG so the dashes can march like on macOS. */
-function dashedFrame(): SVGSVGElement {
+export function dashedFrame(radius = 20): SVGSVGElement {
   const ns = "http://www.w3.org/2000/svg";
   const el = document.createElementNS(ns, "svg");
   el.setAttribute("class", "drop-frame");
@@ -19,7 +19,7 @@ function dashedFrame(): SVGSVGElement {
   rect.setAttribute("y", "0.75");
   rect.setAttribute("width", "calc(100% - 1.5px)");
   rect.setAttribute("height", "calc(100% - 1.5px)");
-  rect.setAttribute("rx", "20");
+  rect.setAttribute("rx", String(radius));
   rect.setAttribute("fill", "none");
   rect.setAttribute("stroke-width", "1.5");
   rect.setAttribute("stroke-dasharray", "6 5");

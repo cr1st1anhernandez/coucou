@@ -6,9 +6,10 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask, type AskedQuestion } from "../core/state";
-import { MAX_CARD_ROWS, washRGBA, type IslandViewName, type Wash } from "../core/layout";
+import { MAX_CARD_ROWS, washRGBA, type BotEmoteName, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
+import { buildLibrary } from "./library";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import {
@@ -36,6 +37,8 @@ export interface ViewActions {
   blip(): void;
   /** Puts a Claude Code session on the Warp pill and shows it. */
   selectSession(id: string): void;
+  /** A quick reaction from Mochi (a wink when something is copied…). */
+  emote(e: BotEmoteName): void;
 }
 
 export interface ViewHost {
@@ -93,6 +96,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Inicio", onclick: () => go("overview") }, svg(ICONS.house, 13));
   const tabChat = h("button", { class: "tab", title: "Preguntar", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
   const tabDrop = h("button", { class: "tab", title: "Soltar archivo", onclick: () => go("upload") }, svg(ICONS.plus, 13));
+  const tabLibrary = h("button", { class: "tab", title: "Biblioteca", onclick: () => go("library") }, svg(ICONS.books, 13));
   const sessionCount = h("span", { class: "tab-count" });
   const tabSessions = h(
     "button",
@@ -112,7 +116,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabLibrary, tabDrop),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -123,6 +127,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
       tabDrop.classList.toggle("on", v === "upload");
+      tabLibrary.classList.toggle("on", v === "library");
       tabSessions.classList.toggle("on", v === "sessions");
       // Only what needs you: a permission or a question. It drops as you answer.
       const pending = State.sessions.filter(isWaiting).length;
@@ -623,7 +628,10 @@ function buildSettings(actions: ViewActions): ViewHost {
         h("span", { text: "Claude Code" }),
       );
       clear(apiBadge);
-      apiBadge.append(dot("#F4505E", 6), h("span", { text: "API" }));
+      apiBadge.append(
+        dot(s.chatEngine === "api" ? "#F5A524" : "#22C55E", 6),
+        h("span", { text: s.chatEngine === "api" ? "Chat · API key" : "Chat · tu cuenta de Claude" }),
+      );
     },
   };
 }
@@ -719,6 +727,7 @@ export function buildViews(
   map.set("settings", buildSettings(actions));
   map.set("sessions", buildSessions(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
+  map.set("library", buildLibrary(actions));
   map.set("upload", buildUpload());
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));
