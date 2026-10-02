@@ -265,3 +265,30 @@ select option {
   background: rgba(245, 165, 36, 0.13);
   color: #fbc06a;
 }
+
+/* Sounds: one switch per kind of sound, ▶ to hear it. */
+.sound-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sound-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.sound-label {
+  flex: 1 1 auto;
+  font-size: 12.5px;
+}
+
+.play-btn {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  font-size: 9px;
+  color: var(--dim);
+}

@@ -185,7 +185,7 @@ function handleHook(island: Island, payload: HookPayload) {
     setStatus(session, "question");
     if (question) appendStep(session, question.slice(0, 120));
     if (already) return;
-    Sound.alert("question");
+    Sound.play("question", "question");
     const free = pillFree();
     if (free) makeCurrent(session.id);
     if (focused && free) {
@@ -200,7 +200,7 @@ function handleHook(island: Island, payload: HookPayload) {
     case "SessionStart":
       setStatus(session, "idle");
       surface("overview", false);
-      Sound.play("work");
+      Sound.play("work", "start");
       break;
 
     case "UserPromptSubmit": {
@@ -212,7 +212,7 @@ function handleHook(island: Island, payload: HookPayload) {
       const asked = payload.prompt ?? payload.message;
       if (asked) appendStep(session, asked.slice(0, 60));
       // The island's peek chime confirms your prompt reached Coucou.
-      Sound.alert("peek");
+      Sound.play("peek", "prompt");
       surface("overview", false);
       break;
     }
@@ -243,7 +243,7 @@ function handleHook(island: Island, payload: HookPayload) {
       const lower = message.toLowerCase();
       if (lower.includes("rate limit") || lower.includes("limite d") || lower.includes("límite")) {
         setStatus(session, "ratelimit");
-        Sound.alert("rate");
+        Sound.play("rate", "rate");
       } else if (message.endsWith("?")) {
         asks(message);
       }
@@ -259,7 +259,7 @@ function handleHook(island: Island, payload: HookPayload) {
       const said = headline(payload.last_assistant_message ?? "");
       session.finalMessage = said || null;
       if (said) appendStep(session, said.slice(0, 60));
-      Sound.alert("finish");
+      Sound.play("finish", "finish");
       // Show the finished card for this session — unless an approval card is up,
       // or you're watching another session that is still working.
       const free = pillFree();
@@ -275,7 +275,7 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "StopFailure": {
       setStatus(session, "error");
-      Sound.play("error");
+      Sound.play("error", "error");
       const free = pillFree();
       if (free) makeCurrent(session.id);
       if (focused && free) surface("error", true);
@@ -323,7 +323,7 @@ function handleHook(island: Island, payload: HookPayload) {
       if (requestId) void Bridge.approvalAck(requestId);
       setStatus(session, "approval");
       State.isPinned = true;
-      Sound.play("approval");
+      Sound.play("approval", "approval");
       if (focused) {
         island.alert("approval");
       } else {

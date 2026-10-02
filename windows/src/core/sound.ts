@@ -12,9 +12,40 @@ export const SOUND_NAMES = [
 
 export type SoundName = (typeof SOUND_NAMES)[number];
 
+/**
+ * What a sound is about. Each one is a switch in the settings window, so you
+ * choose "a session finished" or "Mochi's reactions", not a WAV file name: the
+ * same file can mean different things (`finish` is a session and a chat reply).
+ */
+export const SOUND_CUES = [
+  { id: "finish", label: "Una sesión terminó", sample: "finish", on: true },
+  { id: "question", label: "Claude te pregunta algo", sample: "question", on: true },
+  { id: "prompt", label: "Le enviaste un prompt a Claude Code", sample: "peek", on: true },
+  { id: "approval", label: "Claude pide permiso", sample: "approval", on: false },
+  { id: "start", label: "Empieza una sesión", sample: "work", on: false },
+  { id: "error", label: "Una sesión se detuvo por un error", sample: "error", on: false },
+  { id: "rate", label: "Llegaste al límite de uso", sample: "rate", on: true },
+  { id: "rateFree", label: "Se liberó el límite de uso", sample: "pop", on: true },
+  { id: "meeting", label: "Una reunión está por empezar", sample: "attach", on: true },
+  { id: "github", label: "GitHub: reviews y CI de tus PRs", sample: "blip", on: true },
+  { id: "integrations", label: "Otras integraciones (deploys, pagos, correos…)", sample: "finish", on: false },
+  { id: "chat", label: "Chat con Claude", sample: "send", on: true },
+  { id: "drop", label: "Soltar un archivo", sample: "approve", on: true },
+  { id: "mochi", label: "Reacciones de Mochi", sample: "love", on: true },
+  { id: "ui", label: "Abrir, cerrar y tocar la isla", sample: "open", on: false },
+] as const satisfies readonly { id: string; label: string; sample: SoundName; on: boolean }[];
+
+export type SoundCue = (typeof SOUND_CUES)[number]["id"];
+
+/** Whether a cue plays: the user's choice, or the cue's default. */
+export function cueEnabled(choices: Record<string, boolean>, id: SoundCue): boolean {
+  return choices[id] ?? SOUND_CUES.find((c) => c.id === id)?.on ?? false;
+}
+
 class SoundEngine {
   enabled = true;
   volume = 0.12;
+  private cues: Record<string, boolean> = {};
 
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -84,18 +115,27 @@ class SoundEngine {
     this.enabled = on;
   }
 
-  /**
-   * Silenced in this fork: session start, errors and approvals, integrations and
-   * island UI sounds. The calls are kept so upstream merges stay painless.
-   */
-  play(_name: SoundName | string) {}
+  /** The settings window's per-cue switches. */
+  setCues(choices: Record<string, boolean>) {
+    this.cues = { ...choices };
+  }
 
   /**
-   * The sounds this fork keeps: a session finishing, asking you a question or
-   * hitting the rate limit, the chat, file drops, and Mochi's own reactions.
+   * Plays `name` if sound is on and its cue is switched on. Calls without a cue
+   * are island chrome (`ui`), which is how upstream's call sites read.
    */
-  alert(name: SoundName) {
-    if (!this.enabled) return;
+  play(name: SoundName, cue: SoundCue = "ui") {
+    if (!this.enabled || !cueEnabled(this.cues, cue)) return;
+    this.start(name);
+  }
+
+  /** The settings window's ▶ button: plays even when the cue is off. */
+  async preview(name: SoundName) {
+    await this.preload();
+    this.start(name);
+  }
+
+  private start(name: SoundName) {
     const ctx = this.ctx;
     const master = this.master;
     const buf = this.buffers.get(name);

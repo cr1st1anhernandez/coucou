@@ -61,7 +61,7 @@ function handle(island: Island, update: IntegrationUpdate) {
       if (State.focusId !== update.id) {
         task.pillBadge = event.success ? "finished" : "error";
       }
-      Sound.play(event.success ? "finish" : "error");
+      Sound.play(event.success ? "finish" : "error", "integrations");
       // Same as the Swift pollers: show the compact island so the badge is seen,
       // but never steal the screen for a successful deploy.
       island.reveal();

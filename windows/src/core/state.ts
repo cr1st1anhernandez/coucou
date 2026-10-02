@@ -137,6 +137,8 @@ export interface Settings {
   model: string;
   /** Minutes a session may wait on you before Mochi fidgets and chimes. 0 = off. */
   waitingAlertMinutes: number;
+  /** Per-cue sound switches (SOUND_CUES); a missing cue uses its default. */
+  soundCues: Record<string, boolean>;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -152,6 +154,7 @@ export const DEFAULT_SETTINGS: Settings = {
   hooksInstalled: false,
   model: "claude-opus-5",
   waitingAlertMinutes: 2,
+  soundCues: {},
 };
 
 type Listener = () => void;
