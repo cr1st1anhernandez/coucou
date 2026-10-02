@@ -120,7 +120,7 @@ const SCENES: Record<string, Scene> = {
         ev("c", "Planeación del sprint", 180, 240),
       ] }) },
     };
-    State.settings.activeIntegrations = ["integration_calendar", "integration_github", "integration_vercel", "integration_n8n"];
+    State.settings.activeIntegrations = ["integration_calendar", "integration_github"];
     State.loadIntegrationTasks();
     State.setFocus("integration_calendar");
     island.alert("overview");

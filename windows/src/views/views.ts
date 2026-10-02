@@ -439,11 +439,11 @@ function buildQuestion(actions: ViewActions): ViewHost {
 
 function buildError(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title", text: "El workflow se detuvo." });
+  const title = h("div", { class: "title", text: "La integración reportó un error." });
   const detail = h("div", { class: "detail" });
   const row = h("div", { class: "actions" },
     btn("Reintentar", "primary", () => actions.setView(State.defaultView())),
-    btn("Abrir en n8n", "secondary", () => actions.openUrl("")),
+    btn("Abrir", "secondary", () => actions.openTarget()),
   );
   const el = h("div", { class: "view" }, card("red", stack(116, 16, who, title, detail, row)));
   return {
@@ -451,8 +451,8 @@ function buildError(actions: ViewActions): ViewHost {
     sync() {
       const task = State.focusTask;
       clear(who);
-      who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "El workflow se detuvo." : "La sesión se detuvo por un error.";
+      who.append(agentWho(task, task?.source === "n8n" ? "Integración" : "Claude Code"));
+      title.textContent = task?.source === "n8n" ? "La integración reportó un error." : "La sesión se detuvo por un error.";
       detail.textContent = task?.steps.at(-1) ?? "Sin detalles.";
     },
   };

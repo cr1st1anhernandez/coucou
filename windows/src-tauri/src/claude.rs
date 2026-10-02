@@ -227,11 +227,6 @@ fn file_block(path: &str) -> Option<Value> {
 }
 
 /// Small standalone base64 encoder — not worth another dependency.
-/// Also used for Stripe's basic auth.
-pub(crate) fn base64_for(bytes: &[u8]) -> String {
-    base64(bytes)
-}
-
 fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);

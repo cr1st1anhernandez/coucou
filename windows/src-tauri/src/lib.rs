@@ -282,14 +282,6 @@ fn secret_clear(key: String) -> Result<(), String> {
     secrets::clear(&key)
 }
 
-/// Opens the configured n8n instance — the URL lives in the Credential Manager.
-#[tauri::command]
-fn open_n8n() {
-    if let Some(url) = secrets::get("n8n-url") {
-        open_url(url);
-    }
-}
-
 /// Refresh buttons in the integration cards.
 #[tauri::command]
 async fn refresh_integration(app: AppHandle, id: String) {
@@ -408,7 +400,6 @@ pub fn run() {
             secret_set,
             secret_clear,
             refresh_integration,
-            open_n8n,
             open_settings_window,
             set_paused,
         ])
