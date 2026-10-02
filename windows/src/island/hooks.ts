@@ -209,6 +209,8 @@ function handleHook(island: Island, payload: HookPayload) {
       // The field is `prompt`; reading `message` meant this step was always blank.
       const asked = payload.prompt ?? payload.message;
       if (asked) appendStep(session, asked.slice(0, 60));
+      // The island's peek chime confirms your prompt reached Coucou.
+      Sound.alert("peek");
       surface("overview", false);
       break;
     }
