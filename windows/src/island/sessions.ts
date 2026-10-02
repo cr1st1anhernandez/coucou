@@ -108,6 +108,8 @@ export function touchSession(
       finalMessage: null,
       focusUrl: null,
       rateResetAt: null,
+      todo: null,
+      subagents: [],
     };
     State.sessions.push(s);
   }
@@ -227,8 +229,10 @@ export function mirror() {
     t.sessionCwd = null;
     t.sessionId = null;
     t.sessionFocusUrl = null;
+    t.todo = null;
     return;
   }
+  t.todo = s.todo;
   t.name = s.name;
   t.steps = s.steps;
   t.stepIndex = s.stepIndex;
@@ -463,6 +467,50 @@ function fallbackLines(tool: string, input: Record<string, unknown>): [number, n
 export function resetSummary(s: ClaudeSession) {
   s.summary = emptySummary();
   s.finalMessage = null;
+  // A finished to-do list doesn't carry over to the next prompt.
+  if (s.todo && s.todo.done >= s.todo.total) s.todo = null;
+}
+
+/** TodoWrite carries the whole list: `todos: [{ content, status }]`. */
+export function recordTodos(s: ClaudeSession, input: Record<string, unknown>) {
+  const todos = Array.isArray(input.todos) ? (input.todos as Record<string, unknown>[]) : [];
+  s.todo = todos.length > 0
+    ? { done: todos.filter((t) => t.status === "completed").length, total: todos.length }
+    : null;
+  mirror();
+}
+
+/** Subagent colours by kind; anything else gets a stable one from its name. */
+const SUBAGENT_COLORS: Record<string, string> = {
+  Explore: "#A78BFA",
+  Plan: "#22D3EE",
+  "general-purpose": "#34D399",
+};
+const SUBAGENT_FALLBACK = ["#F472B6", "#F5A524", "#60A5FA", "#FB7185"];
+
+export function subagentColor(type: string): string {
+  if (SUBAGENT_COLORS[type]) return SUBAGENT_COLORS[type];
+  let hash = 0;
+  for (let i = 0; i < type.length; i++) hash = (hash * 31 + type.charCodeAt(i)) | 0;
+  return SUBAGENT_FALLBACK[Math.abs(hash) % SUBAGENT_FALLBACK.length];
+}
+
+/** How long a finished subagent lingers, happy, before flying back into Mochi. */
+export const SUBAGENT_LINGER_MS = 900;
+
+export function startSubagent(s: ClaudeSession, id: string, type: string) {
+  if (!s.subagents.some((a) => a.id === id)) s.subagents.push({ id, type, doneAt: null });
+}
+
+/** Without an id (an older Claude Code), the oldest one still running ends. */
+export function stopSubagent(s: ClaudeSession, id: string | undefined) {
+  const a = (id && s.subagents.find((x) => x.id === id)) || s.subagents.find((x) => x.doneAt == null);
+  if (!a || a.doneAt != null) return;
+  a.doneAt = Date.now();
+  window.setTimeout(() => {
+    s.subagents = s.subagents.filter((x) => x !== a);
+    State.notify();
+  }, SUBAGENT_LINGER_MS + 700);
 }
 
 /** Longest headline kept; the card ellipsises well before this anyway. */

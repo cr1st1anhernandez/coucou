@@ -542,6 +542,61 @@ function buildFinished(actions: ViewActions): ViewHost {
   };
 }
 
+// ── Away ──────────────────────────────────────────────────────────────────────
+
+/**
+ * "Mientras no estabas": back at the keyboard, what moved while you were gone —
+ * what needs you first, then what failed, then what finished. A row takes you
+ * to that session (or straight to its permission card).
+ */
+function buildAway(actions: ViewActions): ViewHost {
+  const who = h("div");
+  const title = h("div", { class: "title one-line", text: "Mientras no estabas" });
+  const rows = h("div", { class: "res" });
+  const row = h("div", { class: "actions" },
+    btn("OK", "primary", () => {
+      State.away = null;
+      actions.collapse();
+    }),
+  );
+  const body = stack(116, 16, who, title, rows, row);
+  body.classList.add("list");
+  const el = h("div", { class: "view" }, card("indigo", body));
+  let key = "";
+  return {
+    el,
+    sync() {
+      const away = State.away;
+      const shown = away?.rows.slice(0, MAX_CARD_ROWS) ?? [];
+      const next = `${away?.minutes}|${shown.map((r) => `${r.sessionId}:${r.status}:${r.detail}`).join("|")}`;
+      if (next === key) return;
+      key = next;
+      clear(who);
+      const more = (away?.rows.length ?? 0) - shown.length;
+      who.append(h("div", { class: "who-row" },
+        h("span", { class: "n", text: "¡Volviste!" }),
+        h("span", { text: `fuera ${away?.minutes ?? 0} min${more > 0 ? ` · ${more} más` : ""}` }),
+      ));
+      clear(rows);
+      for (const r of shown) {
+        rows.append(h("button", {
+          class: "res-row option",
+          title: r.detail,
+          onclick: () => {
+            const approval = State.pendingApproval?.sessionId === r.sessionId;
+            actions.selectSession(r.sessionId);
+            if (approval) actions.setView("approval");
+          },
+        },
+          dot(STATUS_COLORS[r.status], 7),
+          h("b", { text: r.name }),
+          h("span", { text: r.detail }),
+        ));
+      }
+    },
+  };
+}
+
 // ── Confused ──────────────────────────────────────────────────────────────────
 
 function buildConfused(): ViewHost {
@@ -728,6 +783,7 @@ export function buildViews(
   map.set("sessions", buildSessions(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("library", buildLibrary(actions));
+  map.set("away", buildAway(actions));
   map.set("upload", buildUpload());
   map.set("uploading", buildUploading());
   map.set("choose", buildChoose(actions));

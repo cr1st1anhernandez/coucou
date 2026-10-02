@@ -9,7 +9,9 @@ import "../src/style.css";
 window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.now()), 16);
 import { State } from "../src/core/state";
 import { Island } from "../src/island/island";
-import { appendStep, makeCurrent, setRateLimited, setStatus, touchSession } from "../src/island/sessions";
+import {
+  appendStep, makeCurrent, recordTodos, setRateLimited, setStatus, startSubagent, stopSubagent, touchSession,
+} from "../src/island/sessions";
 import { setLibraryPreview } from "../src/views/library";
 
 type Scene = (island: Island) => void;
@@ -149,6 +151,68 @@ const SCENES: Record<string, Scene> = {
     });
     island.alert("library");
     window.setTimeout(() => island["views"].get("library")?.focus?.(), 50);
+  },
+  subagents(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    startSubagent(s, "1", "Explore");
+    startSubagent(s, "2", "general-purpose");
+    makeCurrent(s.id);
+    island.alert("overview");
+    if (location.search.includes("done")) window.setTimeout(() => { stopSubagent(s, "1"); State.notify(); }, 800);
+  },
+  todo(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    recordTodos(s, { todos: [
+      { status: "completed" }, { status: "completed" }, { status: "completed" },
+      { status: "in_progress" }, { status: "pending" }, { status: "pending" }, { status: "pending" },
+    ] });
+    makeCurrent(s.id);
+    island.alert("overview");
+  },
+  "todo-compact"(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    recordTodos(s, { todos: [{ status: "completed" }, { status: "pending" }, { status: "pending" }] });
+    makeCurrent(s.id);
+    State.isPinned = false;
+    island.collapse();
+  },
+  knock(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "question");
+    makeCurrent(s.id);
+    State.isPinned = false;
+    island.collapse();
+    window.setTimeout(() => island.nudge(false), 400);
+  },
+  focus(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    makeCurrent(s.id);
+    island.alert("overview");
+    island.setFocusMode(true);
+    if (location.search.includes("done")) window.setTimeout(() => island.setFocusMode(false, true), 900);
+  },
+  away(island) {
+    const a = session("a", "coucou");
+    a.summary = { files: [{ path: "x.ts", added: 40, removed: 3 }], added: 40, removed: 3, tests: "passed" };
+    setStatus(a, "finished");
+    const b = session("b", "api-pagos");
+    setStatus(b, "error");
+    appendStep(b, "3 tests fallan en checkout.spec.ts");
+    const c = session("c", "web");
+    setStatus(c, "approval");
+    State.away = {
+      minutes: 42,
+      rows: [
+        { sessionId: "c", name: "web", status: "approval", detail: "Espera permiso · npm install zod" },
+        { sessionId: "b", name: "api-pagos", status: "error", detail: "Error · 3 tests fallan en checkout.spec.ts" },
+        { sessionId: "a", name: "coucou", status: "finished", detail: "Terminó · 1 archivo · +40 −3 · tests ✓" },
+      ],
+    };
+    island.showAway();
   },
   "library-empty"(island) {
     setLibraryPreview({ dir: "C:\\Users\\dev\\Documents\\mochi", projects: [] });

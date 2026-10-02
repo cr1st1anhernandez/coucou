@@ -2,6 +2,7 @@
 // Each canvas owns a BotEngine; the island's frame loop ticks every live one.
 
 import { BotEngine, hexToRGB } from "./engine";
+import type { BotStateName } from "../core/layout";
 import type { AgentTask } from "../core/state";
 
 interface MiniBot {
@@ -69,7 +70,15 @@ export function syncMiniBotStates(tasks: AgentTask[]) {
     if (!task) continue;
     mb.engine.setState(task.state);
     mb.engine.bodyColor = hexToRGB(task.color);
+    mb.engine.setProgress(task.todo?.done ?? 0, task.todo?.total ?? 0);
   }
+}
+
+/** Sets the state of the mini Mochi inside `slot` (one made by createMiniBot). */
+export function setMiniBotState(slot: HTMLElement, state: BotStateName) {
+  const canvas = slot.querySelector("canvas");
+  const mb = canvas ? live.get(canvas) : undefined;
+  mb?.engine.setState(state);
 }
 
 export function tickMiniBots(dt: number) {

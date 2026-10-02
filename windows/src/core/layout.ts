@@ -24,6 +24,7 @@ export type IslandViewName =
   | "settings"
   | "sessions"
   | "library"
+  | "away"
   | "greeting";
 
 export type BotStateName =
@@ -92,6 +93,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   sessions: { height: 200, botX: 50, botY: null, botDiameter: 42, agentMode: "none" },
   // The library takes the whole panel; Mochi sits small beside the project tabs.
   library: { height: 320, botX: 36, botY: 64, botDiameter: 26, agentMode: "none" },
+  away: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   greeting: { height: 150, botX: 320, botY: 90, botDiameter: 0, agentMode: "none" },
 };
 

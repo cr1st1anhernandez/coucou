@@ -2017,3 +2017,51 @@ input[type="range"]::-webkit-slider-thumb {
   min-width: 0;
   height: 38px;
 }
+
+/* ── Subagents, knocks ──────────────────────────────────────────────────── */
+
+/* Rides on Mochi's centre; each mini starts there and pops out to its slot. */
+#sub-layer {
+  position: absolute;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  z-index: 3;
+}
+
+.sub-mini {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 18px;
+  height: 18px;
+  transform: translate(0px, 0px) scale(0.1);
+  opacity: 0;
+}
+
+.sub-mini.out {
+  opacity: 1;
+  transition: transform 0.5s cubic-bezier(0.3, 1.7, 0.45, 1), opacity 0.15s;
+}
+
+.sub-mini.home {
+  opacity: 0;
+  transition: transform 0.38s cubic-bezier(0.55, 0, 0.8, 0.4), opacity 0.3s ease-in 0.12s;
+}
+
+.knock-toc {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  font: 800 11px var(--font);
+  color: #fde68a;
+  pointer-events: none;
+  animation: toc-float 0.9s ease-out forwards;
+  z-index: 4;
+}
+
+@keyframes toc-float {
+  0% { opacity: 0; transform: translate(-50%, -30%) scale(0.7); }
+  20% { opacity: 1; transform: translate(-50%, -60%) scale(1.1); }
+  100% { opacity: 0; transform: translate(-50%, -160%) scale(1); }
+}

@@ -13,14 +13,24 @@ import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import { BotEngine, hexToRGB } from "../mochi/engine";
 import { Greeting } from "../mochi/greeting";
-import { createMiniBot, pruneMiniBots, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
+import { createMiniBot, pruneMiniBots, setMiniBotState, syncMiniBotStates, tickMiniBots } from "../mochi/minibots";
 import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
-import { makeCurrent, rescheduleNags, setStatusById } from "./sessions";
+import { SUBAGENT_LINGER_MS, makeCurrent, rescheduleNags, setStatusById, subagentColor } from "./sessions";
 import { dropQuestionCard } from "./hooks";
+import { noteUserHere } from "./away";
+
+/** Where subagent mini Mochis sit around Mochi in the overview card (px from its centre). */
+const SUB_SLOTS: readonly [number, number][] = [[-44, -30], [-44, 30], [44, 42]];
+
+interface SubMini {
+  slot: HTMLElement;
+  index: number;
+  home: boolean;
+}
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -46,6 +56,8 @@ export class Island {
   private botGlow!: HTMLElement;
   private greetingCanvas!: HTMLCanvasElement;
   private miniGrid!: HTMLElement;
+  private subLayer!: HTMLElement;
+  private subs = new Map<string, SubMini>();
   private countdown!: HTMLElement;
   private wakeStrip!: HTMLElement;
 
@@ -209,6 +221,7 @@ export class Island {
     this.botCanvas = h("canvas", { id: "bot-canvas" });
     this.greetingCanvas = h("canvas", { id: "greeting-canvas" });
     this.miniGrid = h("div", { id: "mini-grid" });
+    this.subLayer = h("div", { id: "sub-layer" });
     this.countdown = h("div", { id: "countdown" });
 
     this.header = buildHeader(actions);
@@ -242,6 +255,7 @@ export class Island {
       this.clipEl,
       this.botGlow,
       this.botCanvas,
+      this.subLayer,
       this.miniGrid,
       this.countdown,
     );
@@ -395,17 +409,65 @@ export class Island {
   }
 
   /**
-   * A Claude Code session has been waiting on you too long: Mochi startles,
-   * fidgets, and the island peeks out so you notice even from another window.
+   * A Claude Code session has been waiting on you too long: Mochi peeks out of
+   * the edge of the screen and knocks on the glass twice — "toc, toc" — then,
+   * for a permission, opens its card so it's one click away.
    */
-  nudge(chime: boolean) {
+  nudge(chime: boolean, approval = false) {
     Sound.resume();
     if (chime) Sound.play("question", "question");
-    this.engine.squash();
-    this.engine.triggerEmote("surprised", 1);
-    window.setTimeout(() => this.engine.doRoll(700, 1), 350);
-    window.setTimeout(() => this.engine.triggerEmote("annoyed"), 1100);
     this.reveal();
+    this.engine.triggerEmote("surprised", 0.6);
+    for (const [i, at] of [380, 760].entries()) {
+      window.setTimeout(() => {
+        this.engine.knock();
+        this.shakeIsland();
+        this.tocLabel(i === 0 ? -1 : 1);
+        this.ensureRunning();
+      }, at);
+    }
+    window.setTimeout(() => {
+      if (approval && State.pendingApproval) this.alert("approval");
+      else this.engine.triggerEmote("annoyed");
+    }, 1250);
+    this.ensureRunning();
+  }
+
+  /** The glass shivers under the knock. */
+  private shakeIsland() {
+    this.islandEl.animate(
+      [
+        { transform: "translateX(-50%)" },
+        { transform: "translateX(calc(-50% - 2.5px))" },
+        { transform: "translateX(calc(-50% + 2px))" },
+        { transform: "translateX(calc(-50% - 1px))" },
+        { transform: "translateX(-50%)" },
+      ],
+      { duration: 240, easing: "ease-out" },
+    );
+  }
+
+  /** A little "toc" floats up beside Mochi. */
+  private tocLabel(side: -1 | 1) {
+    const label = h("span", { class: "knock-toc", text: "toc" });
+    const r = this.botSize.value * 0.3;
+    label.style.left = `${this.botCx.value + side * (r + 10)}px`;
+    label.style.top = `${this.botCy.value - r}px`;
+    this.islandEl.append(label);
+    window.setTimeout(() => label.remove(), 900);
+  }
+
+  /** Focus mode on/off — see away.ts. Off with `stretch` when the work is done. */
+  setFocusMode(on: boolean, stretch = false) {
+    this.engine.setFocusMode(on, stretch);
+    this.ensureRunning();
+  }
+
+  /** Back at the keyboard with news: the "Mientras no estabas" card. */
+  showAway() {
+    this.alert("away");
+    this.engine.triggerEmote("happy", 1.6);
+    Sound.play("pop", "mochi");
     this.ensureRunning();
   }
 
@@ -575,11 +637,75 @@ export class Island {
     }
   }
 
+  // ── Subagents ───────────────────────────────────────────────────────────────
+
+  /**
+   * One mini Mochi per subagent of the session on screen: it pops out of Mochi
+   * when Claude launches it, bobs beside it while it works, beams when it's
+   * done and flies back in — Mochi gulps it down. Overview only.
+   */
+  private syncSubagents() {
+    const s = State.currentSession;
+    const show = State.mode === "expanded" && State.view === "overview" &&
+      State.focusId === "integration_claude" && s != null;
+    const list = show && s ? s.subagents.slice(0, SUB_SLOTS.length) : [];
+    const ids = new Set(list.map((a) => a.id));
+
+    for (const [id, sub] of this.subs) {
+      if (!ids.has(id)) {
+        sub.slot.remove();
+        this.subs.delete(id);
+      }
+    }
+    const taken = new Set([...this.subs.values()].map((x) => x.index));
+    for (const a of list) {
+      let sub = this.subs.get(a.id);
+      if (!sub) {
+        const index = [0, 1, 2].find((i) => !taken.has(i)) ?? 0;
+        taken.add(index);
+        const mini = createMiniBot({
+          id: `sub:${a.id}`, name: a.type, color: subagentColor(a.type), state: "working",
+          stepIndex: 0, steps: [], source: "claudeCode", isIntegration: false,
+        }, 18);
+        const slot = h("div", { class: "sub-mini", title: a.type }, mini);
+        this.subLayer.append(slot);
+        sub = { slot, index, home: false };
+        this.subs.set(a.id, sub);
+        // Out of Mochi with a pop.
+        requestAnimationFrame(() => {
+          const [dx, dy] = SUB_SLOTS[index];
+          slot.style.transform = `translate(${dx}px, ${dy}px) scale(1)`;
+          slot.classList.add("out");
+        });
+        this.engine.squash();
+        Sound.play("pop", "mochi");
+      }
+      if (a.doneAt != null && !sub.home) {
+        sub.home = true;
+        setMiniBotState(sub.slot, "finished");
+        const slot = sub.slot;
+        window.setTimeout(() => {
+          slot.classList.add("home");
+          slot.style.transform = "translate(0px, 0px) scale(0.2)";
+          window.setTimeout(() => {
+            this.engine.gulp();
+            this.ensureRunning();
+          }, 380);
+        }, SUBAGENT_LINGER_MS);
+      }
+    }
+    // They ride along with Mochi.
+    this.subLayer.style.left = `${this.botCx.value}px`;
+    this.subLayer.style.top = `${this.botCy.value}px`;
+    this.subLayer.style.opacity = list.length > 0 ? "1" : "0";
+  }
+
   // ── Geometry ────────────────────────────────────────────────────────────────
 
   /** Rows of the list card on screen, which sets its height. */
   private cardRows(): number {
     if (State.view === "finished") return Math.min(MAX_CARD_ROWS, State.currentSession?.summary.files.length ?? 0);
+    if (State.view === "away") return Math.min(MAX_CARD_ROWS, State.away?.rows.length ?? 0);
     if (State.view === "question") {
       const pq = State.pendingQuestion;
       const q = pq && pq.sessionId === State.currentSessionId ? pq.questions[pq.step] : null;
@@ -668,6 +794,7 @@ export class Island {
     // The wake strip is the only thing the OS can hit while the island is hidden.
     this.wakeStrip.addEventListener("mouseenter", () => {
       Sound.resume();
+      noteUserHere(this);
       if (State.mode === "hidden") this.fsm.mouseEntered();
     });
 
@@ -715,6 +842,7 @@ export class Island {
       y >= rect.y - HIT_MARGIN && y <= rect.y + rect.h + HIT_MARGIN;
 
     if (inIsland && !this.wasInIsland) {
+      noteUserHere(this);
       if (this.fsm.state === "coucou") this.greeting.hover();
       this.fsm.mouseEntered();
       this.homeCollapseAt = null;
@@ -845,6 +973,7 @@ export class Island {
     this.uploadCanvas.el.classList.toggle("on", uploadActive);
     this.viewsEl.classList.toggle("hidden-by-upload", uploadActive);
 
+    this.syncSubagents();
     tickMiniBots(dt);
     this.views.get(State.view)?.tick?.(nowMs);
     if (UploadSeq.isActive) this.stepSequence();
@@ -864,7 +993,7 @@ export class Island {
       ? settling
       : settling ||
         !this.botCx.settled || !this.botCy.settled || !this.botSize.settled ||
-        greetingActive || this.engine.busy || UploadSeq.isActive ||
+        greetingActive || this.engine.busy || UploadSeq.isActive || this.subs.size > 0 ||
         (this.views.get(State.view)?.animating?.() ?? false);
 
     if (busy) {
@@ -1020,6 +1149,10 @@ export class Island {
 
     syncMiniBotStates(State.tasks);
     this.engine.setState(State.effectiveState);
+    // The to-do ring follows the session on the Warp pill when Mochi shows it.
+    const focus = State.focusTask;
+    const todo = focus?.id === "integration_claude" ? focus.todo : null;
+    this.engine.setProgress(todo?.done ?? 0, todo?.total ?? 0);
   }
 
   /** Applies settings coming from Rust at boot. */

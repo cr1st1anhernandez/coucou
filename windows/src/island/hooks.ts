@@ -8,10 +8,11 @@ import { Sound } from "../core/sound";
 import { State, type AskedQuestion, type ClaudeSession } from "../core/state";
 import type { Island } from "./island";
 import {
-  appendStep, endSession, headline, isBusy, makeCurrent, parseResetTime, recordTool,
+  appendStep, endSession, headline, isBusy, makeCurrent, parseResetTime, recordTodos, recordTool,
   resetSummary, setNagHandler, setRateFreeHandler, setRateLimited, setStatus, setStatusById,
-  touchSession,
+  startSubagent, stopSubagent, touchSession,
 } from "./sessions";
+import { noteActivity } from "./away";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -43,6 +44,9 @@ interface HookPayload {
   coucou_root?: string | null;
   /** Added by coucou-hook: WARP_FOCUS_URL, the session's Warp tab. */
   warp_focus_url?: string | null;
+  /** SubagentStart / SubagentStop: which subagent, and what kind (Explore, Plan…). */
+  agent_id?: string;
+  agent_type?: string;
 }
 
 function lastPathComponent(p: string): string {
@@ -163,8 +167,9 @@ function nag(island: Island, session: ClaudeSession) {
   // Show the session that needs you, unless an approval card already owns the pill.
   makeCurrent(session.id);
   if (State.focusId !== CLAUDE_ID) State.setPillBadge(CLAUDE_ID, "approval");
-  // Only a pending question chimes; a permission reminder stays silent.
-  island.nudge(session.status === "question");
+  // Only a pending question chimes; a permission reminder stays silent. Either
+  // way Mochi knocks on the glass, and a permission gets its card opened.
+  island.nudge(session.status === "question", session.status === "approval");
   State.notify();
 }
 
@@ -308,6 +313,7 @@ function handleHook(island: Island, payload: HookPayload) {
         break;
       }
       setStatus(session, "working");
+      if (tool === "TodoWrite") recordTodos(session, payload.tool_input ?? {});
       appendStep(session, stepLabel(tool, payload.tool_input ?? {}));
       surface("overview", false);
       break;
@@ -338,6 +344,8 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "Stop": {
+      // Any subagent still out is done by now: send them all home.
+      while (session.subagents.some((a) => a.doneAt == null)) stopSubagent(session, undefined);
       setStatus(session, "finished");
       // Stop has no `message`: without the reply the card fell back to the last
       // tool step, and a turn "ended" on `Ejecuta · cd C:/Users/…`.
@@ -372,11 +380,15 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
     }
 
-    case "SubagentStart":
-      appendStep(session, "+ subagente");
+    case "SubagentStart": {
+      const type = payload.agent_type || "subagente";
+      startSubagent(session, payload.agent_id || `${Date.now()}`, type);
+      appendStep(session, `+ subagente · ${type}`);
       break;
+    }
 
     case "SubagentStop":
+      stopSubagent(session, payload.agent_id);
       appendStep(session, "• subagente listo");
       break;
 
@@ -467,5 +479,7 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
   }
 
+  // Work is happening: a good moment to check whether the user is still here.
+  noteActivity(island);
   State.notify();
 }
