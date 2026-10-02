@@ -50,8 +50,12 @@ export const Bridge = {
 
   openUrl: (url: string) => call<void>("open_url", { url }),
 
-  /** "Open terminal" → brings Warp to the front; Explorer when Warp isn't installed. */
-  openTerminal: (path: string | null) => call<boolean>("open_terminal", { path }),
+  /**
+   * "Open terminal" → the session's own Warp tab when `focusUrl` (WARP_FOCUS_URL)
+   * is known, Warp's front window otherwise; Explorer when Warp isn't installed.
+   */
+  openTerminal: (path: string | null, focusUrl: string | null = null) =>
+    call<boolean>("open_terminal", { path, focusUrl }),
 
   quit: () => call<void>("quit_app"),
 

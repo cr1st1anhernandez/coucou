@@ -1,7 +1,9 @@
-// "Open terminal" with Warp: bring the Warp window that is already open to the
-// front, exactly as it was left (same tab, same Claude Code session). Only when
-// Warp isn't running is it launched. No new tab, no new window.
+// "Open terminal" with Warp: jump to the tab and pane the Claude Code session
+// runs in, through the deep link Warp exports as WARP_FOCUS_URL. Without one,
+// bring the Warp window that is already open to the front, exactly as it was
+// left; only when Warp isn't running is it launched. No new tab, no new window.
 
+use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -18,6 +20,37 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetForegroundWindow, GetWindow, GetWindowThreadProcessId, IsIconic,
     IsWindowVisible, SetForegroundWindow, ShowWindow, GW_OWNER, SW_RESTORE,
 };
+
+/// Release channels Warp registers a URL scheme for.
+const FOCUS_SCHEMES: [&str; 4] = ["warp", "warppreview", "warpdev", "warposs"];
+
+/// `warp://session/<32 lowercase hex>`, the shape of WARP_FOCUS_URL. Anything
+/// else is refused: the island must not be able to open arbitrary URLs.
+pub fn is_focus_url(url: &str) -> bool {
+    let Some((scheme, rest)) = url.split_once("://") else { return false };
+    let Some(id) = rest.strip_prefix("session/") else { return false };
+    FOCUS_SCHEMES.contains(&scheme)
+        && id.len() == 32
+        && id.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Switches Warp to the session's own tab. Warp ignores a stale id (a closed
+/// tab) and simply comes to the front, which is the old behaviour anyway.
+pub fn focus_session(url: &str) -> bool {
+    if !is_focus_url(url) {
+        return false;
+    }
+    // Raise the window ourselves first: the deep link is handed to Warp by a
+    // helper process, which Windows may not let take the foreground.
+    if let Some(hwnd) = find_window() {
+        focus(hwnd);
+    }
+    Command::new("rundll32.exe")
+        .args(["url.dll,FileProtocolHandler", url])
+        .creation_flags(crate::CREATE_NO_WINDOW)
+        .spawn()
+        .is_ok()
+}
 
 /// Focuses the open Warp window, or launches Warp. False when Warp isn't installed.
 pub fn focus_or_launch(path: Option<&str>) -> bool {
@@ -124,4 +157,20 @@ fn tap_alt() {
     };
     let inputs = [key(Default::default()), key(KEYEVENTF_KEYUP)];
     unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_warp_session_links_are_opened() {
+        assert!(is_focus_url("warp://session/acc59f11bff545c2a3ac99d4842ad916"));
+        assert!(is_focus_url("warppreview://session/acc59f11bff545c2a3ac99d4842ad916"));
+        assert!(!is_focus_url("warp://session/ACC59F11BFF545C2A3AC99D4842AD916"));
+        assert!(!is_focus_url("warp://session/acc59f11"));
+        assert!(!is_focus_url("warp://action/new_tab?path=C:/"));
+        assert!(!is_focus_url("https://session/acc59f11bff545c2a3ac99d4842ad916"));
+        assert!(!is_focus_url("warp://session/acc59f11bff545c2a3ac99d4842ad916&x"));
+    }
 }

@@ -30,7 +30,7 @@ use pipe::Pending;
 use settings::Settings;
 
 /// Keeps spawned helpers from flashing a console window.
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct Shared {
     pub settings: Mutex<Settings>,
@@ -133,10 +133,14 @@ fn open_url(url: String) {
         .spawn();
 }
 
-/// "Open terminal" brings the open Warp window to the front (or launches Warp),
-/// and opens the folder in Explorer when Warp isn't installed.
+/// "Open terminal" jumps to the session's own Warp tab when Warp told us which
+/// one it is, brings the open Warp window to the front (or launches Warp)
+/// otherwise, and opens the folder in Explorer when Warp isn't installed.
 #[tauri::command]
-fn open_terminal(path: Option<String>) -> bool {
+fn open_terminal(path: Option<String>, focus_url: Option<String>) -> bool {
+    if focus_url.as_deref().is_some_and(warp::focus_session) {
+        return true;
+    }
     if warp::focus_or_launch(path.as_deref()) {
         return true;
     }

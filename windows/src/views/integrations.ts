@@ -70,7 +70,7 @@ function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
         class: "link-btn",
         style: `color:${task.color}b3`,
         text: "Abrir Warp",
-        onclick: () => void Bridge.openTerminal(task.sessionCwd ?? null),
+        onclick: () => void Bridge.openTerminal(task.sessionCwd ?? null, task.sessionFocusUrl ?? null),
       }),
     );
   } else if (task.id === "integration_n8n") {

@@ -21,6 +21,8 @@ export interface AgentTask {
   sessionCwd?: string | null;
   /** The Claude Code session the Warp pill mirrors right now. */
   sessionId?: string | null;
+  /** That session's Warp tab, `warp://session/<id>`, when it runs in Warp. */
+  sessionFocusUrl?: string | null;
 }
 
 /** Where a Claude Code session stands, as shown in the Sessions view. */
@@ -62,6 +64,8 @@ export interface ClaudeSession {
   summary: SessionSummary;
   /** First sentence of Claude's last reply, the finished card's title. */
   finalMessage: string | null;
+  /** Warp's deep link to the session's tab (WARP_FOCUS_URL), if it runs in Warp. */
+  focusUrl: string | null;
 }
 
 export interface ApprovalInfo {

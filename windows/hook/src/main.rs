@@ -163,6 +163,8 @@ fn read_event() -> Option<(String, String)> {
         ("wt_session", "WT_SESSION"),
         ("term_session_id", "TERM_SESSION_ID"),
         ("session_pid", "CLAUDE_CODE_SSE_PORT"),
+        // Warp's deep link to this exact tab and pane: `warp://session/<id>`.
+        ("warp_focus_url", "WARP_FOCUS_URL"),
     ] {
         if !map.contains_key(key) {
             let value = std::env::var(var).unwrap_or_default();
