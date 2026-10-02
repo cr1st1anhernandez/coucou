@@ -418,7 +418,7 @@ export class Island {
     this.uploadDone = false;
 
     this.engine.gulp();
-    Sound.play("approve");
+    Sound.alert("approve");
     this.engine.triggerEmote("happy");
     this.engine.animateMorph(0);
 
@@ -437,7 +437,7 @@ export class Island {
         State.noteMessage = String(err).replace(/^Error:\s*/, "");
         this.engine.animateMorph(0);
         this.setView("note");
-        Sound.play("error");
+        Sound.alert("error");
         window.setTimeout(() => this.setView(State.defaultView()), 2400);
       });
   }
@@ -455,12 +455,12 @@ export class Island {
     const tens = Math.floor(p * 10);
     if (tens > this.uploadTens && tens < 10) {
       this.uploadTens = tens;
-      Sound.play("tick");
+      Sound.alert("tick");
     }
 
     if (!this.uploadDone && since >= PRE_PROGRESS + dur) {
       this.uploadDone = true;
-      Sound.play("approve");
+      Sound.alert("approve");
       this.engine.triggerEmote("happy");
     }
     // The extra second is the grow-back, after which the choose card is up.
@@ -638,7 +638,7 @@ export class Island {
     this.botHoverStart = { x, y };
     this.engine.blink();
     this.engine.tgEs = 1.08;
-    Sound.play("hover");
+    Sound.alert("hover");
     this.scheduleLove();
   }
 
@@ -650,7 +650,7 @@ export class Island {
       if (performance.now() / 1000 - this.lastLoveTime < 6) return;
       this.lastLoveTime = performance.now() / 1000;
       this.engine.triggerEmote("love");
-      Sound.play("love");
+      Sound.alert("love");
     }, 1900);
   }
 
@@ -665,7 +665,7 @@ export class Island {
     this.prevViewBeforeConfused = State.view;
     State.stateOverride = "dizzy";
     this.engine.setState("dizzy");
-    Sound.play("dizzy");
+    Sound.alert("dizzy");
     this.alert("confused");
     if (this.confusedRecovery != null) window.clearTimeout(this.confusedRecovery);
     this.confusedRecovery = window.setTimeout(() => {

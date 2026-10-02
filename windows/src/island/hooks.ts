@@ -239,7 +239,7 @@ function handleHook(island: Island, payload: HookPayload) {
       const lower = message.toLowerCase();
       if (lower.includes("rate limit") || lower.includes("limite d") || lower.includes("límite")) {
         setStatus(session, "ratelimit");
-        Sound.play("rate");
+        Sound.alert("rate");
       } else if (message.endsWith("?")) {
         asks(message);
       }
