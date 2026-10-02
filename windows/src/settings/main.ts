@@ -284,6 +284,12 @@ const INTEGRATIONS: IntegrationDef[] = [
     fields: [{ key: "notion-api-key", label: "Token de integración", placeholder: "ntn_…", secret: true }] },
   { id: "integration_calcom", name: "Cal.com", color: "#C9956A",
     fields: [{ key: "calcom-api-key", label: "API key", placeholder: "cal_…", secret: true }] },
+  // Google Calendar → Configuración → tu calendario → "Dirección secreta en formato iCal".
+  { id: "integration_calendar", name: "Calendario", color: "#4285F4",
+    fields: [{
+      key: "calendar-ical-url", label: "Dirección iCal",
+      placeholder: "https://calendar.google.com/calendar/ical/…/basic.ics", secret: true,
+    }] },
 ];
 
 const MAX_ACTIVE = 4;
@@ -502,6 +508,7 @@ async function main() {
   const keys = [
     "stripe-api-key", "github-token", "vercel-token",
     "n8n-url", "n8n-api-key", "resend-api-key", "notion-api-key", "calcom-api-key",
+    "calendar-ical-url",
   ];
   const present: Record<string, boolean> = {};
   for (const k of keys) present[k] = (await Bridge.secretPresent(k)) ?? false;

@@ -1,5 +1,6 @@
 // Coucou for Windows — app wiring and the commands the island calls.
 
+mod calendar;
 mod claude;
 mod files;
 mod hooks;
