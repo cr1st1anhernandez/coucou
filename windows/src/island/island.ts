@@ -5,7 +5,7 @@ import { Tracked, Spring, clamp } from "../core/anim";
 import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
-  ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
+  MAX_CARD_ROWS, ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
   islandSize,
   type IslandMode, type IslandViewName,
 } from "../core/layout";
@@ -84,6 +84,7 @@ export class Island {
   private confusedRecovery: number | null = null;
   private prevViewBeforeConfused: IslandViewName = "overview";
   private lastSyncedView: IslandViewName | null = null;
+  private lastRows = 0;
 
   /** Drop sequence bookkeeping: last tick played, and whether the ✓ has fired. */
   private uploadTens = 0;
@@ -341,6 +342,15 @@ export class Island {
     this.fsm.reveal();
   }
 
+  /** The finished card is up: Mochi puffs up with pride, as on the prototype's result card. */
+  celebrate() {
+    window.setTimeout(() => {
+      if (State.mode !== "expanded" || State.view !== "finished") return;
+      this.engine.triggerEmote("proud", 1.6);
+      this.ensureRunning();
+    }, 900);
+  }
+
   /** An alert stopped waiting for an answer: let the island auto-close again. */
   dropPin() {
     this.fsm.pinned = false;
@@ -471,8 +481,14 @@ export class Island {
 
   // ── Geometry ────────────────────────────────────────────────────────────────
 
+  /** Rows of the list card on screen, which sets its height. */
+  private cardRows(): number {
+    if (State.view === "finished") return Math.min(MAX_CARD_ROWS, State.currentSession?.summary.files.length ?? 0);
+    return 0;
+  }
+
   private targetSize(): { w: number; h: number; r: number } {
-    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length);
+    const { w, h } = islandSize(State.mode, State.view, State.chatHistory.length, this.cardRows());
     const r = State.mode === "expanded" ? EXPANDED_CORNER : ROUNDED_CORNER;
     return { w, h, r };
   }
@@ -755,7 +771,7 @@ export class Island {
   };
 
   private updateBotTargets() {
-    const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress);
+    const p = botPosition(State.mode, State.view, this.height.value, State.uploadProgress, this.cardRows());
     this.botCx.target = p.cx;
     this.botCy.target = p.cy;
     this.botSize.target = p.diameter / 0.6;
@@ -850,6 +866,14 @@ export class Island {
     this.contentEl.style.opacity = expanded && !greetingActive ? "1" : "0";
     this.contentEl.style.pointerEvents = expanded && !greetingActive ? "auto" : "none";
     this.greetingCanvas.style.display = greetingActive ? "block" : "none";
+
+    // A list card can change length while it is up (another session's turn).
+    const rows = this.cardRows();
+    if (rows !== this.lastRows) {
+      const shrinking = rows < this.lastRows;
+      this.lastRows = rows;
+      if (expanded) this.animateGeometry(shrinking);
+    }
 
     this.header.sync();
     for (const [name, view] of this.views) {

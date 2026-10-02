@@ -99,10 +99,23 @@ export function chatPromptHeight(messageCount: number): number {
   return Math.min(300, 240 + messageCount * 40);
 }
 
+/** Most rows a list card (the prototype's result card) shows. */
+export const MAX_CARD_ROWS = 3;
+
+/**
+ * A card that lists rows grows with them, like the prototype's result card:
+ * 262 px for three rows. No rows keeps the view's usual height.
+ */
+export function listCardHeight(view: IslandViewName, rows: number): number {
+  const n = Math.min(MAX_CARD_ROWS, rows);
+  return n > 0 ? 172 + n * 30 : VIEW_LAYOUTS[view].height;
+}
+
 export function islandSize(
   mode: IslandMode,
   view: IslandViewName,
   chatCount = 0,
+  rows = 0,
 ): { w: number; h: number } {
   switch (mode) {
     case "hidden":
@@ -112,7 +125,7 @@ export function islandSize(
     case "compact":
       return { w: COMPACT_W, h: NOTCH_H };
     case "expanded": {
-      const h = view === "prompt" ? chatPromptHeight(chatCount) : VIEW_LAYOUTS[view].height;
+      const h = view === "prompt" ? chatPromptHeight(chatCount) : listCardHeight(view, rows);
       return { w: EXPANDED_W, h };
     }
   }
@@ -131,6 +144,7 @@ export function botPosition(
   view: IslandViewName,
   islandH: number,
   uploadProgress = 0,
+  rows = 0,
 ): BotPlacement {
   switch (mode) {
     case "hidden":
@@ -149,6 +163,10 @@ export function botPosition(
       }
       if (layout.botY != null) {
         return { cx: layout.botX, cy: layout.botY, diameter: layout.botDiameter, opacity: 1 };
+      }
+      // A list card is tall: Mochi sits level with its title, not mid-card.
+      if (rows > 0) {
+        return { cx: layout.botX, cy: 42 + 52, diameter: layout.botDiameter, opacity: 1 };
       }
       // Centre of the fixed 84 pt card (8 pt top inset + 34 pt header → content at y = 42)
       const headerBottom = 42;
