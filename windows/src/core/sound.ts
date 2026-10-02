@@ -84,7 +84,17 @@ class SoundEngine {
     this.enabled = on;
   }
 
-  play(name: SoundName | string) {
+  /**
+   * Silenced in this fork: session start, errors and approvals, integrations and
+   * island UI sounds. The calls are kept so upstream merges stay painless.
+   */
+  play(_name: SoundName | string) {}
+
+  /**
+   * The sounds this fork keeps: a session finishing, asking you a question or
+   * hitting the rate limit, the chat, file drops, and Mochi's own reactions.
+   */
+  alert(name: SoundName) {
     if (!this.enabled) return;
     const ctx = this.ctx;
     const master = this.master;
