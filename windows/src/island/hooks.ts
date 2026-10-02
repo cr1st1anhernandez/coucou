@@ -33,6 +33,8 @@ interface HookPayload {
   coucou_lines?: { added?: number; removed?: number } | null;
   /** Added by coucou-hook: the repo or worktree folder the session works in. */
   coucou_root?: string | null;
+  /** Added by coucou-hook: WARP_FOCUS_URL, the session's Warp tab. */
+  warp_focus_url?: string | null;
 }
 
 function lastPathComponent(p: string): string {
@@ -159,7 +161,9 @@ function handleHook(island: Island, payload: HookPayload) {
     return;
   }
 
-  const session = touchSession(payload.session_id || "default", cwd, payload.coucou_root);
+  const session = touchSession(
+    payload.session_id || "default", cwd, payload.coucou_root, payload.warp_focus_url,
+  );
   /** Nothing else is holding the pill: no approval card, no other busy session on it. */
   const pillFree = () =>
     !State.pendingApproval &&

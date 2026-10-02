@@ -75,7 +75,12 @@ function emptySummary(): SessionSummary {
 }
 
 /** Finds the session behind an event, creating it on first sight. */
-export function touchSession(id: string, cwd: string, root?: string | null): ClaudeSession {
+export function touchSession(
+  id: string,
+  cwd: string,
+  root?: string | null,
+  focusUrl?: string | null,
+): ClaudeSession {
   const now = Date.now();
   pruneStale(now);
   let s = State.sessions.find((x) => x.id === id);
@@ -94,11 +99,13 @@ export function touchSession(id: string, cwd: string, root?: string | null): Cla
       waitingSince: null,
       summary: emptySummary(),
       finalMessage: null,
+      focusUrl: null,
     };
     State.sessions.push(s);
   }
   s.lastEventAt = now;
   if (cwd) s.cwd = cwd;
+  if (focusUrl) s.focusUrl = focusUrl;
   // Most recent first: that's the order the Sessions view lists them in.
   State.sessions.sort((a, b) => b.lastEventAt - a.lastEventAt);
   if (!State.currentSession) State.currentSessionId = s.id;
@@ -203,6 +210,7 @@ export function mirror() {
     t.state = "idle";
     t.sessionCwd = null;
     t.sessionId = null;
+    t.sessionFocusUrl = null;
     return;
   }
   t.name = s.name;
@@ -211,6 +219,7 @@ export function mirror() {
   t.state = botState(s);
   t.sessionCwd = s.cwd;
   t.sessionId = s.id;
+  t.sessionFocusUrl = s.focusUrl;
 }
 
 // ── Waiting reminders ─────────────────────────────────────────────────────────
