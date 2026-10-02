@@ -69,7 +69,8 @@ pub fn start(app: AppHandle) {
     // Every minute: a review or a CI run is news you want while it's fresh.
     spawn(app.clone(), "integration_github", 7, 60, poll_github);
     spawn(app.clone(), "integration_calcom", 8, 300, poll_calcom);
-    spawn(app, "integration_notion", 9, 300, poll_notion);
+    spawn(app.clone(), "integration_notion", 9, 300, poll_notion);
+    spawn(app, "integration_calendar", 10, 300, poll_calendar);
 }
 
 /// True when the user has this integration switched on in settings.
@@ -114,6 +115,7 @@ pub async fn poll_once(app: AppHandle, id: &str) {
         "integration_resend" => poll_resend(app).await,
         "integration_notion" => poll_notion(app).await,
         "integration_calcom" => poll_calcom(app).await,
+        "integration_calendar" => poll_calendar(app).await,
         _ => {}
     }
 }
@@ -732,6 +734,55 @@ fn parse_notion_page(obj: &Value) -> Option<Value> {
         "lastEditedAt": obj.get("last_edited_time").and_then(Value::as_str)?,
         "url": obj.get("url").and_then(Value::as_str).unwrap_or("https://notion.so"),
     }))
+}
+
+// ── Google Calendar (secret iCal address) ─────────────────────────────────────
+
+/// The feed of a whole calendar is rarely more than a few MB; past this, stop.
+const MAX_ICAL_BYTES: usize = 8 << 20;
+
+async fn poll_calendar(app: AppHandle) {
+    let Some(url) = secrets::get("calendar-ical-url") else { return };
+    let url = url.trim().replacen("webcal://", "https://", 1);
+    let fail = |error: String| {
+        emit(&app, IntegrationUpdate {
+            id: "integration_calendar",
+            data: json!({}),
+            error: Some(error),
+            event: None,
+        })
+    };
+    if !url.starts_with("https://") {
+        fail("La dirección debe empezar con https://".into());
+        return;
+    }
+    let response = match client().get(&url).header("User-Agent", "Coucou").send().await {
+        Ok(r) => r,
+        Err(e) => {
+            fail(format!("Sin conexión: {e}"));
+            return;
+        }
+    };
+    if !response.status().is_success() {
+        fail(status_error(response.status().as_u16(), "Google no aceptó la dirección"));
+        return;
+    }
+    let Ok(bytes) = response.bytes().await else { return };
+    if bytes.len() > MAX_ICAL_BYTES {
+        fail("El calendario es demasiado grande".into());
+        return;
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    if !text.contains("BEGIN:VCALENDAR") {
+        fail("Eso no parece una dirección iCal".into());
+        return;
+    }
+    emit(&app, IntegrationUpdate {
+        id: "integration_calendar",
+        data: json!({ "events": crate::calendar::parse(&text, None) }),
+        error: None,
+        event: None,
+    });
 }
 
 // ── Cal.com ───────────────────────────────────────────────────────────────────

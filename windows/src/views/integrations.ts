@@ -8,6 +8,7 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { State, type AgentTask } from "../core/state";
 import { Bridge } from "../core/bridge";
+import { clock, upcomingMeetings } from "../island/calendar";
 
 /** Same shape as the Swift `timeAgo` computed properties. */
 export function timeAgo(value: unknown): string {
@@ -51,6 +52,7 @@ const OPEN_URLS: Record<string, string> = {
   integration_stripe: "https://dashboard.stripe.com/payments",
   integration_notion: "https://notion.so",
   integration_calcom: "https://app.cal.com/bookings",
+  integration_calendar: "https://calendar.google.com",
 };
 
 function idleCard(task: AgentTask, openSettings: () => void): HTMLElement {
@@ -346,6 +348,42 @@ function calcomCard(): HTMLElement {
   return h("div", { class: "int-card" }, header("#C9956A", "Cal.com", "Agenda"), rows);
 }
 
+// ── Google Calendar ───────────────────────────────────────────────────────────
+
+/** The next meetings, today and tomorrow, from the secret iCal feed. */
+function calendarCard(): HTMLElement {
+  const now = Date.now();
+  const meetings = upcomingMeetings(now);
+  const rows = h("div", { class: "int-rows tight" });
+  if (meetings.length === 0) {
+    rows.append(h("div", { class: "int-empty", text: "Sin reuniones en las próximas horas" }));
+  }
+  const today = new Date(now).toDateString();
+  for (const m of meetings.slice(0, 3)) {
+    const live = m.start <= now && m.end > now;
+    const day = new Date(m.start).toDateString() === today ? "" : "mañana ";
+    const row = h(
+      "div",
+      { class: "int-row" },
+      dot(live ? "#22C55E" : "#4285F4", 4),
+      h("span", {
+        class: "int-time",
+        style: `color:${live ? "#22C55E" : "#8AB4F8"}`,
+        text: live ? "ahora" : `${day}${clock(m.start)}`,
+      }),
+      h("span", { class: "int-name", text: m.title }),
+    );
+    if (m.link) {
+      const link = m.link;
+      row.classList.add("link");
+      row.title = "Unirme";
+      row.addEventListener("click", () => void Bridge.openUrl(link));
+    }
+    rows.append(row);
+  }
+  return h("div", { class: "int-card" }, header("#4285F4", "Calendario", "Próximas"), rows);
+}
+
 // ── n8n ───────────────────────────────────────────────────────────────────────
 
 function n8nCard(task: AgentTask, onDetail: () => void, openSettings: () => void): HTMLElement {
@@ -428,6 +466,7 @@ export function hasIntegrationData(id: string): boolean {
     case "integration_notion":
       return arr(id, "pages").length > 0;
     case "integration_calcom":
+    case "integration_calendar":
       return info.loaded;
     default:
       return false;
@@ -457,6 +496,8 @@ export function renderIntegrationCard(task: AgentTask, hooks: IntegrationCardHoo
       return notionCard();
     case "integration_calcom":
       return calcomCard();
+    case "integration_calendar":
+      return calendarCard();
     default:
       return idleCard(task, hooks.openSettings);
   }
