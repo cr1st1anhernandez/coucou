@@ -27,6 +27,42 @@ pub struct Settings {
     /// Which kinds of sound play, by cue id (SOUND_CUES in sound.ts). A cue
     /// that isn't here uses its default, so new cues need no migration.
     pub sound_cues: HashMap<String, bool>,
+    /// "claudeCode" (the user's Claude Code and its account) or "api" (API key).
+    pub chat_engine: String,
+    /// How the library's buttons hand a prompt to the terminal.
+    pub paste_modes: PasteModes,
+}
+
+/// The library's three ways to take a prompt to the terminal. At least one is
+/// always on: `normalized()` turns "copy" back on if all three were switched off.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PasteModes {
+    /// Copy to the clipboard.
+    pub copy: bool,
+    /// Copy and bring Warp to the front.
+    pub warp: bool,
+    /// Copy, bring Warp to the front and press Ctrl+V (never Enter).
+    pub paste: bool,
+}
+
+impl Default for PasteModes {
+    fn default() -> Self {
+        Self { copy: true, warp: true, paste: false }
+    }
+}
+
+impl Settings {
+    pub fn normalized(mut self) -> Self {
+        let m = &mut self.paste_modes;
+        if !m.copy && !m.warp && !m.paste {
+            m.copy = true;
+        }
+        if self.chat_engine != "api" {
+            self.chat_engine = "claudeCode".into();
+        }
+        self
+    }
 }
 
 fn default_model() -> String {
@@ -47,6 +83,8 @@ impl Default for Settings {
             model: default_model(),
             waiting_alert_minutes: 2.0,
             sound_cues: HashMap::new(),
+            chat_engine: "claudeCode".into(),
+            paste_modes: PasteModes::default(),
         }
     }
 }
@@ -86,7 +124,7 @@ pub fn load() -> Settings {
     settings
         .active_integrations
         .retain(|id| INTEGRATION_IDS.contains(&id.as_str()));
-    settings
+    settings.normalized()
 }
 
 pub fn save(settings: &Settings) -> std::io::Result<()> {

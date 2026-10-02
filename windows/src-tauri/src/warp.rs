@@ -14,7 +14,7 @@ use windows::Win32::System::Threading::{
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
-    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_MENU,
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_CONTROL, VK_MENU, VK_V,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetForegroundWindow, GetWindow, GetWindowThreadProcessId, IsIconic,
@@ -64,6 +64,48 @@ pub fn focus_or_launch(path: Option<&str>) -> bool {
         cmd.current_dir(p);
     }
     cmd.spawn().is_ok()
+}
+
+/// Brings Warp to the front and presses Ctrl+V in it — never Enter: what was
+/// pasted waits there for the user. Pastes only once Warp really is the
+/// foreground window, so the keystroke can't land in some other app.
+pub fn paste(path: Option<&str>) -> Result<(), String> {
+    let Some(hwnd) = find_window() else {
+        // A Warp that is only now starting has no prompt to paste into yet.
+        return if focus_or_launch(path) {
+            Err("Abrí Warp; cuando cargue, pega con Ctrl+V.".into())
+        } else {
+            Err("No encontré Warp. Pega con Ctrl+V donde quieras.".into())
+        };
+    };
+    focus(hwnd);
+    for _ in 0..30 {
+        if unsafe { GetForegroundWindow() } == hwnd {
+            // Give Warp a beat to put the caret back in its input.
+            std::thread::sleep(std::time::Duration::from_millis(120));
+            if unsafe { GetForegroundWindow() } != hwnd {
+                break;
+            }
+            press_ctrl_v();
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Err("Warp no pasó al frente; pega con Ctrl+V.".into())
+}
+
+fn press_ctrl_v() {
+    let key = |vk, flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, dwFlags: flags, ..Default::default() } },
+    };
+    let inputs = [
+        key(VK_CONTROL, Default::default()),
+        key(VK_V, Default::default()),
+        key(VK_V, KEYEVENTF_KEYUP),
+        key(VK_CONTROL, KEYEVENTF_KEYUP),
+    ];
+    unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
 }
 
 /// The default per-user install, then the machine-wide one, then %PATH%.
