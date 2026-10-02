@@ -52,6 +52,8 @@ export interface ClaudeSession {
   /** Date.now() since when the session has been waiting on the user. */
   waitingSince: number | null;
   summary: SessionSummary;
+  /** First sentence of Claude's last reply, the finished card's title. */
+  finalMessage: string | null;
 }
 
 export interface ApprovalInfo {
