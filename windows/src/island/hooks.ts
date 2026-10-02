@@ -264,8 +264,12 @@ function handleHook(island: Island, payload: HookPayload) {
       // or you're watching another session that is still working.
       const free = pillFree();
       if (free) makeCurrent(session.id);
-      if (focused && free) surface("finished", true);
-      else State.setPillBadge(CLAUDE_ID, "finished");
+      if (focused && free) {
+        surface("finished", true);
+        if (session.summary.files.length > 0) island.celebrate();
+      } else {
+        State.setPillBadge(CLAUDE_ID, "finished");
+      }
       break;
     }
 

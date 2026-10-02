@@ -364,14 +364,22 @@ export function recordTool(
   lines?: { added?: number; removed?: number } | null,
 ) {
   if (EDIT_TOOLS.has(tool) && ok) {
-    const file = input.file_path ?? input.notebook_path;
-    if (typeof file === "string" && file && !s.summary.files.includes(file)) s.summary.files.push(file);
     const [added, removed] =
       lines && typeof lines.added === "number"
         ? [lines.added, lines.removed ?? 0]
         : fallbackLines(tool, input);
     s.summary.added += added;
     s.summary.removed += removed;
+    const file = input.file_path ?? input.notebook_path;
+    if (typeof file === "string" && file) {
+      let change = s.summary.files.find((f) => f.path === file);
+      if (!change) {
+        change = { path: file, added: 0, removed: 0 };
+        s.summary.files.push(change);
+      }
+      change.added += added;
+      change.removed += removed;
+    }
   }
   if (SHELL_TOOLS.has(tool) && typeof input.command === "string" && isTestCommand(input.command)) {
     // One failing run marks the whole turn: a later green run doesn't erase it.

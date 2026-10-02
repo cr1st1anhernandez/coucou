@@ -6,7 +6,7 @@ import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
 import { State, type AgentTask } from "../core/state";
-import { washRGBA, type IslandViewName, type Wash } from "../core/layout";
+import { MAX_CARD_ROWS, washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
@@ -394,15 +394,28 @@ function buildError(actions: ViewActions): ViewHost {
 
 // ── Finished ──────────────────────────────────────────────────────────────────
 
+/** `C:\repo\src\main.ts` → `main.ts`. */
+function fileName(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path;
+}
+
+/**
+ * The prototype's result card, for a turn that changed files: Claude's last
+ * line, one row per file with its +/−, then the totals. A turn that touched
+ * nothing keeps the plain card.
+ */
 function buildFinished(actions: ViewActions): ViewHost {
   const who = h("div");
   const title = h("div", { class: "title one-line" });
+  const rows = h("div", { class: "res" });
   const summary = h("div", { class: "summary" });
   const row = h("div", { class: "actions" },
     btn("Abrir terminal", "primary", () => actions.openTerminal()),
     btn("OK", "secondary", () => actions.collapse()),
   );
-  const el = h("div", { class: "view" }, card("green", stack(116, 16, who, title, summary, row)));
+  const body = stack(116, 16, who, title, rows, summary, row);
+  const el = h("div", { class: "view" }, card("green", body));
+  let key = "";
   return {
     el,
     sync() {
@@ -410,7 +423,25 @@ function buildFinished(actions: ViewActions): ViewHost {
       who.append(agentWho(State.focusTask, "Claude Code terminó"));
       const session = State.currentSession;
       title.textContent = session?.finalMessage || "Sesión terminada";
-      summary.textContent = session ? summaryText(session.summary) : "";
+      const files = session?.summary.files ?? [];
+      const shown = files.slice(0, MAX_CARD_ROWS);
+      const next = shown.map((f) => `${f.path}:${f.added}:${f.removed}`).join("|");
+      if (next !== key) {
+        key = next;
+        clear(rows);
+        for (const f of shown) {
+          rows.append(h("div", { class: "res-row", title: f.path },
+            h("b", { text: fileName(f.path) }),
+            h("span", { text: `+${f.added} −${f.removed}` }),
+          ));
+        }
+      }
+      rows.style.display = shown.length > 0 ? "" : "none";
+      body.classList.toggle("list", shown.length > 0);
+      const more = files.length - shown.length;
+      const totals = session ? summaryText(session.summary) : "";
+      summary.textContent = more > 0 ? `${totals} · ${more} más` : totals;
+      summary.classList.toggle("fine", shown.length > 0);
     },
   };
 }

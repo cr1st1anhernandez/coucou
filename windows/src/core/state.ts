@@ -28,9 +28,17 @@ export type SessionStatus =
   | "idle" | "thinking" | "working" | "approval" | "question"
   | "finished" | "error" | "ratelimit";
 
+/** One edited file and the lines it gained and lost this turn. */
+export interface FileChange {
+  path: string;
+  added: number;
+  removed: number;
+}
+
 /** What a session did since its last prompt — shown when it finishes. */
 export interface SessionSummary {
-  files: string[];
+  /** In the order they were first touched. */
+  files: FileChange[];
   added: number;
   removed: number;
   tests: "none" | "passed" | "failed";
