@@ -44,8 +44,8 @@ export const ICONS = {
   sparkles: "M10 3l1.9 5.1L17 10l-5.1 1.9L10 17l-1.9-5.1L3 10l5.1-1.9L10 3zm8 11l.9 2.1L21 17l-2.1.9L18 20l-.9-2.1L15 17l2.1-.9L18 14z",
 
   // The ones below are outlines: draw them with svg(path, size, { stroke: 2 }).
-  // square.and.arrow.up — the drop zone's call to action
-  upload: "M12 15V4M7.5 8.5 12 4l4.5 4.5M5 13.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-5.5",
+  // paperclip — "Adjuntar archivo" in the chat inputs
+  paperclip: "M20.5 11.5l-8.2 8.2a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8",
   // doc.on.doc
   copy: "M9 8.5h9.5a1 1 0 0 1 1 1V20a1 1 0 0 1-1 1H9a1 1 0 0 1-1-1V9.5a1 1 0 0 1 1-1zM5 15.5V4a1 1 0 0 1 1-1h9.5",
   // terminal — "A Warp"

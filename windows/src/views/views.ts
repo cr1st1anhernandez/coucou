@@ -95,7 +95,6 @@ function stack(padLeft: number, padRight: number, ...children: Node[]): HTMLElem
 export function buildHeader(actions: ViewActions): ViewHost {
   const tabHome = h("button", { class: "tab", title: "Inicio", onclick: () => go("overview") }, svg(ICONS.house, 13));
   const tabChat = h("button", { class: "tab", title: "Preguntar", onclick: () => go("prompt") }, svg(ICONS.bubble, 13));
-  const tabDrop = h("button", { class: "tab", title: "Soltar archivo", onclick: () => go("upload") }, svg(ICONS.plus, 13));
   const tabLibrary = h("button", { class: "tab", title: "Biblioteca", onclick: () => go("library") }, svg(ICONS.books, 13));
   const sessionCount = h("span", { class: "tab-count" });
   const tabSessions = h(
@@ -116,7 +115,7 @@ export function buildHeader(actions: ViewActions): ViewHost {
   const el = h(
     "div",
     { id: "header" },
-    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabLibrary, tabDrop),
+    h("div", { class: "tabs" }, tabHome, tabSessions, tabChat, tabLibrary),
     h("div", { class: "header-actions" }, gearBtn, soundBtn),
   );
 
@@ -126,7 +125,6 @@ export function buildHeader(actions: ViewActions): ViewHost {
       const v = State.view;
       tabHome.classList.toggle("on", v === "overview" || v === "empty");
       tabChat.classList.toggle("on", v === "prompt");
-      tabDrop.classList.toggle("on", v === "upload");
       tabLibrary.classList.toggle("on", v === "library");
       tabSessions.classList.toggle("on", v === "sessions");
       // Only what needs you: a permission or a question. It drops as you answer.

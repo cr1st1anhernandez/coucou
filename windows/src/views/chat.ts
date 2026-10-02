@@ -4,11 +4,11 @@
 // It runs on the user's own Claude Code by default (their account, no API key),
 // streaming the reply as it's written; the API key engine is still there for
 // whoever prefers it (Ajustes → Claude → Motor del chat). Files go in through
-// the "Suelta tus archivos aquí" strip and ride along with the next message.
+// the paperclip in the input bar and ride along with the next message.
 
 import { h, svg, clear } from "./dom";
 import { ICONS } from "./icons";
-import { buildDropZone } from "./dropzone";
+import { buildAttach } from "./attach";
 import { Bridge, onEvent, type ChatContext, type CodeChatEvent } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State, type ChatMessage } from "../core/state";
@@ -39,7 +39,7 @@ function bubble(message: ChatMessage): HTMLElement {
 
 export function buildPrompt(onHeightChange: () => void): ViewHost {
   const log = h("div", { class: "chat-log" });
-  const drop = buildDropZone("chat", ["PDF", "Imágenes", "Código", "Docs"]);
+  const attach = buildAttach("chat");
   const input = h("input", {
     type: "text",
     class: "chat-input",
@@ -47,12 +47,12 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     spellcheck: "false",
   }) as HTMLInputElement;
   const send = h("button", { class: "send-btn", title: "Enviar" }, svg(ICONS.arrowUp, 11));
-  const bar = h("div", { class: "chat-bar" }, input, send);
+  const bar = h("div", { class: "chat-bar" }, attach.button, input, send);
 
   const el = h(
     "div",
     { class: "view" },
-    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, log, drop.el, bar)),
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body" }, log, attach.chip, bar)),
   );
   (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
 
@@ -130,7 +130,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
   return {
     el,
     sync() {
-      drop.sync();
+      attach.sync(bar);
       const key = State.chatHistory.map((m) => `${m.id}:${m.content.length}:${m.status ?? ""}`).join("|");
       if (key !== renderedKey) {
         renderedKey = key;

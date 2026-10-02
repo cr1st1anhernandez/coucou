@@ -12,7 +12,7 @@
 
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
-import { buildDropZone } from "./dropzone";
+import { buildAttach } from "./attach";
 import {
   Bridge, onEvent,
   type CodeChatEvent, type LibraryData, type LibraryItem, type LibraryKind, type LibraryMode, type LibraryProject,
@@ -85,7 +85,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
   );
   const cols = h("div", { class: "lib-cols" });
   const statusLine = h("div", { class: "lib-status" });
-  const drop = buildDropZone("library", [".md", ".ps1", ".sh", ".txt"]);
+  const attach = buildAttach("library");
   const input = h("input", {
     type: "text",
     class: "chat-input",
@@ -93,7 +93,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     spellcheck: "false",
   }) as HTMLInputElement;
   const send = h("button", { class: "send-btn", title: "Guardar con Claude" }, svg(ICONS.arrowUp, 11));
-  const bar = h("div", { class: "chat-bar lib-bar" }, input, send);
+  const bar = h("div", { class: "chat-bar lib-bar" }, attach.button, input, send);
 
   const body = h(
     "div",
@@ -101,7 +101,8 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     h("div", { class: "lib-top" }, h("div", { class: "lib-bot-spot" }), tabs, folderBtn, sortBtn),
     cols,
     statusLine,
-    h("div", { class: "lib-entry" }, drop.el, bar),
+    attach.chip,
+    bar,
   );
   const el = h("div", { class: "view" }, h("div", { class: "card lib-card" }, body));
 
@@ -278,7 +279,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
   return {
     el,
     sync() {
-      drop.sync();
+      attach.sync(bar);
       const modes = State.settings.pasteModes;
       const key = [
         current, loading, JSON.stringify(data?.projects.map((p) => [p.id, p.items.length, p.items.map((i) => i.path + i.title)])),
