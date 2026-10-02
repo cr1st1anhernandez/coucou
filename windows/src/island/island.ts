@@ -796,11 +796,14 @@ export class Island {
     // spends most of its life in. Geometry still has to finish retracting.
     const settling =
       this.width.animating || this.height.animating || this.radius.animating;
+    // A view mid-transition (the step ticker) needs its frames too: stopping the
+    // loop halfway froze its rows on top of each other until the next step came.
     const busy = State.mode === "hidden"
       ? settling
       : settling ||
         !this.botCx.settled || !this.botCy.settled || !this.botSize.settled ||
-        greetingActive || this.engine.busy || UploadSeq.isActive;
+        greetingActive || this.engine.busy || UploadSeq.isActive ||
+        (this.views.get(State.view)?.animating?.() ?? false);
 
     if (busy) {
       requestAnimationFrame(this.frame);

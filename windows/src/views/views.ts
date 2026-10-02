@@ -45,6 +45,8 @@ export interface ViewHost {
   focus?(): void;
   /** Called every frame while the view is on screen. */
   tick?(nowMs: number): void;
+  /** True while the view is mid-animation and needs more frames to finish it. */
+  animating?(): boolean;
 }
 
 // ── Shared pieces ─────────────────────────────────────────────────────────────
@@ -187,6 +189,7 @@ function buildOverview(actions: ViewActions): ViewHost {
     tick(nowMs: number) {
       if (mode === "ticker") ticker.tick(nowMs);
     },
+    animating: () => mode === "ticker" && ticker.animating,
     sync() {
       const task = State.focusTask;
       if (task?.id !== lastFocus) {
