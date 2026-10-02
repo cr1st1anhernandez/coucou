@@ -1606,81 +1606,7 @@ input[type="range"]::-webkit-slider-thumb {
   text-overflow: ellipsis;
 }
 
-/* ── "Suelta tus archivos aquí" inside a chat ───────────────────────────── */
-
-.drop-mini-wrap {
-  flex: 0 0 auto;
-}
-
-/* Same dashed, marching frame as the drop view, in a compact clickable strip. */
-.drop-mini {
-  width: 100%;
-  height: 38px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 0 12px;
-  font-family: var(--font);
-  color: inherit;
-  text-align: left;
-  cursor: default;
-  transition: background 0.18s;
-}
-
-.drop-mini:hover {
-  background: radial-gradient(160px 80px at 50% 100%, rgba(255, 255, 255, 0.06), transparent 70%),
-    var(--card-flat);
-}
-
-.drop-mini > :not(.drop-frame) {
-  position: relative;
-  z-index: 1;
-}
-
-.drop-mini-icon {
-  width: 22px;
-  height: 22px;
-  flex: 0 0 22px;
-  border-radius: 7px;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.07);
-  color: #d5d7db;
-  transition: color 0.2s, background 0.2s;
-}
-
-.drop-mini.over .drop-mini-icon {
-  color: var(--green-2);
-  background: rgba(52, 211, 153, 0.14);
-}
-
-.drop-mini-text {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  flex: 1 1 auto;
-}
-
-.drop-mini-title {
-  font: 500 12px var(--font);
-  color: #d5d7db;
-  transition: color 0.2s;
-}
-
-.drop-mini.over .drop-mini-title {
-  color: var(--green-2);
-}
-
-.drop-mini-hint {
-  font: 400 10.5px var(--font);
-  color: var(--dim-3);
-}
-
-.drop-mini .drop-tags span {
-  font-size: 10px;
-  padding: 2px 7px;
-}
+/* ── Attaching a file to a chat ─────────────────────────────────────────── */
 
 .attach-chip {
   height: 30px;
@@ -1995,29 +1921,6 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--red-text);
 }
 
-/* The drop strip and the input share one row: the panel can't grow any taller. */
-.lib-entry {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  flex: 0 0 auto;
-}
-
-.lib-entry .drop-mini-wrap {
-  flex: 0 0 214px;
-  width: 214px;
-}
-
-.lib-entry .drop-mini .drop-tags {
-  display: none;
-}
-
-.lib-entry .lib-bar {
-  flex: 1 1 auto;
-  min-width: 0;
-  height: 38px;
-}
-
 /* ── Subagents, knocks ──────────────────────────────────────────────────── */
 
 /* Rides on Mochi's centre; each mini starts there and pops out to its slot. */
@@ -2064,4 +1967,50 @@ input[type="range"]::-webkit-slider-thumb {
   0% { opacity: 0; transform: translate(-50%, -30%) scale(0.7); }
   20% { opacity: 1; transform: translate(-50%, -60%) scale(1.1); }
   100% { opacity: 0; transform: translate(-50%, -160%) scale(1); }
+}
+
+.attach-row:empty {
+  display: none;
+}
+
+.attach-btn {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  margin-left: -4px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dim-2);
+  display: grid;
+  place-items: center;
+  cursor: default;
+  transition: background 0.12s, color 0.12s, transform 0.08s;
+}
+
+.attach-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--ink);
+}
+
+.attach-btn:active {
+  transform: scale(0.92);
+}
+
+/* A file dragged over the island while a chat is up lands in its input bar. */
+.chat-bar {
+  transition: box-shadow 0.18s, background 0.18s;
+}
+
+.chat-bar.over {
+  background: rgba(52, 211, 153, 0.1);
+  box-shadow: inset 0 0 0 1.5px rgba(52, 211, 153, 0.6);
+}
+
+.chat-bar.over .attach-btn {
+  color: var(--green-2);
+}
+
+.lib-bar {
+  flex: 0 0 auto;
 }

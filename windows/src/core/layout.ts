@@ -103,8 +103,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
 
 /** Chat view grows with the conversation — IslandContainer.chatPromptHeight. */
 export function chatPromptHeight(messageCount: number): number {
-  // 256: room for the "Suelta tus archivos aquí" strip above the input.
-  return Math.min(PANEL_H, 256 + messageCount * 40);
+  return Math.min(300, 240 + messageCount * 40);
 }
 
 /** Most rows a list card (the prototype's result card) shows. */
