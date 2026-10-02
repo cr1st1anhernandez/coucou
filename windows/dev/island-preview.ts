@@ -80,6 +80,21 @@ const SCENES: Record<string, Scene> = {
     island.alert("question");
     window.setTimeout(() => (document.querySelectorAll(".view.on .option")[1] as HTMLElement)?.click(), 300);
   },
+  github(island) {
+    State.integrations.integration_github = {
+      loaded: true, configured: true, error: null,
+      data: {
+        totalRepos: 12, totalStars: 40,
+        prs: [
+          { title: "Windows: answer Claude's questions from the island", repo: "cr1st1anhernandez/coucou", number: 7, url: "https://github.com", status: "ci_failed" },
+          { title: "Rate limit countdown", repo: "cr1st1anhernandez/coucou", number: 6, url: "https://github.com", status: "approved" },
+          { title: "Sound toggles", repo: "cr1st1anhernandez/coucou", number: 5, url: "https://github.com", status: "ci_running" },
+        ],
+      },
+    };
+    State.setFocus("integration_github");
+    island.alert("overview");
+  },
   ratelimit(island) {
     const s = session("a", "coucou");
     setRateLimited(s, Date.now() + 82 * 60_000);

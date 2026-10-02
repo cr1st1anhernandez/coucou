@@ -211,7 +211,38 @@ function statRow(icon: string, color: string, label: string, value: string): HTM
   );
 }
 
+/** Accent and label per PR status, worst news first (see pr_status in Rust). */
+const PR_STATUS: Record<string, [string, string]> = {
+  ci_failed: ["#F4505E", "CI falló"],
+  changes: ["#F5A524", "Cambios pedidos"],
+  ci_running: ["#3B9EFF", "CI corriendo"],
+  approved: ["#22C55E", "Aprobado"],
+  draft: ["#6B7079", "Borrador"],
+  review: ["#8E939C", "En review"],
+};
+
+/** Your open PRs, the one that changed last on top; a click opens it. */
+function githubPrsCard(prs: Record<string, unknown>[]): HTMLElement {
+  const rows = h("div", { class: "int-rows" });
+  prs.slice(0, 3).forEach((pr, i) => {
+    const [accent, label] = PR_STATUS[String(pr.status)] ?? PR_STATUS.review;
+    const row = listRow(
+      accent,
+      i === 0,
+      h("span", { class: "int-name", text: String(pr.title ?? "") }),
+      h("span", { class: "int-ago", style: `color:${accent}`, text: label }),
+    );
+    row.classList.add("link");
+    row.title = `${pr.repo ?? ""}#${pr.number ?? ""}`;
+    row.addEventListener("click", () => void Bridge.openUrl(String(pr.url ?? "")));
+    rows.append(row);
+  });
+  return h("div", { class: "int-card" }, header("#F4505E", "GitHub", "Tus PRs"), rows);
+}
+
 function githubCard(): HTMLElement {
+  const prs = arr("integration_github", "prs");
+  if (prs.length > 0) return githubPrsCard(prs);
   const d = get("integration_github");
   const stars = Number(d.totalStars ?? 0);
   const repos = Number(d.totalRepos ?? 0);
