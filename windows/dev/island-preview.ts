@@ -9,7 +9,6 @@ import "../src/style.css";
 window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.now()), 16);
 import { State } from "../src/core/state";
 import { Island } from "../src/island/island";
-import { ingestCalendar } from "../src/island/calendar";
 import { appendStep, makeCurrent, setRateLimited, setStatus, touchSession } from "../src/island/sessions";
 
 type Scene = (island: Island) => void;
@@ -94,35 +93,6 @@ const SCENES: Record<string, Scene> = {
       },
     };
     State.setFocus("integration_github");
-    island.alert("overview");
-  },
-  meeting(island) {
-    const start = Date.now() + 5 * 60_000;
-    island.meetingSoon({
-      key: "m", title: "Daily del equipo de producto", start, end: start + 15 * 60_000,
-      link: "https://meet.google.com/abc-defg-hij",
-    });
-  },
-  calendar(island) {
-    const at = (min: number) => {
-      const d = new Date(Date.now() + min * 60_000);
-      return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}T${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}00`;
-    };
-    const ev = (uid: string, summary: string, from: number, to: number, link: string | null = null) => ({
-      uid, summary, start: { value: at(from), tzid: null, date: false }, end: { value: at(to), tzid: null, date: false },
-      duration: null, rrule: null, exdates: [], recurrenceId: null, cancelled: false, link,
-    });
-    State.integrations.integration_calendar = {
-      loaded: true, configured: true, error: null,
-      data: { meetings: ingestCalendar({ events: [
-        ev("a", "Revisión de diseño", -10, 20, "https://meet.google.com/x"),
-        ev("b", "1:1 con producto", 60, 90),
-        ev("c", "Planeación del sprint", 180, 240),
-      ] }) },
-    };
-    State.settings.activeIntegrations = ["integration_calendar", "integration_github", "integration_vercel", "integration_n8n"];
-    State.loadIntegrationTasks();
-    State.setFocus("integration_calendar");
     island.alert("overview");
   },
   ratelimit(island) {

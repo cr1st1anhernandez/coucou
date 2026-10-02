@@ -145,4 +145,3 @@ problems. It stays on your machine.
 - Not in this version: sending a file by email and dragging Mochi onto a window
   to attach it as context. "Open terminal" brings the open Warp window to the
   front (or launches Warp), and opens the folder in Explorer without it.
-- Cal.com shows the next bookings as a list rather than the Mac's calendar.

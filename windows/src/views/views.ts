@@ -9,7 +9,6 @@ import { State, type AgentTask, type AskedQuestion } from "../core/state";
 import { MAX_CARD_ROWS, washRGBA, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
-import { clock, startsIn } from "../island/calendar";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import {
@@ -439,11 +438,11 @@ function buildQuestion(actions: ViewActions): ViewHost {
 
 function buildError(actions: ViewActions): ViewHost {
   const who = h("div");
-  const title = h("div", { class: "title", text: "El workflow se detuvo." });
+  const title = h("div", { class: "title", text: "La integración reportó un error." });
   const detail = h("div", { class: "detail" });
   const row = h("div", { class: "actions" },
     btn("Reintentar", "primary", () => actions.setView(State.defaultView())),
-    btn("Abrir en n8n", "secondary", () => actions.openUrl("")),
+    btn("Abrir", "secondary", () => actions.openTarget()),
   );
   const el = h("div", { class: "view" }, card("red", stack(116, 16, who, title, detail, row)));
   return {
@@ -451,48 +450,9 @@ function buildError(actions: ViewActions): ViewHost {
     sync() {
       const task = State.focusTask;
       clear(who);
-      who.append(agentWho(task, task?.source === "n8n" ? "n8n" : "Claude Code"));
-      title.textContent = task?.source === "n8n" ? "El workflow se detuvo." : "La sesión se detuvo por un error.";
+      who.append(agentWho(task, task?.source === "n8n" ? "Integración" : "Claude Code"));
+      title.textContent = task?.source === "n8n" ? "La integración reportó un error." : "La sesión se detuvo por un error.";
       detail.textContent = task?.steps.at(-1) ?? "Sin detalles.";
-    },
-  };
-}
-
-// ── Meeting ───────────────────────────────────────────────────────────────────
-
-/** A meeting starts soon: when, and the call link when the invite has one. */
-function buildMeeting(actions: ViewActions): ViewHost {
-  const who = h("div");
-  const title = h("div", { class: "title one-line" });
-  const when = h("div", { class: "summary" });
-  const row = h("div", { class: "actions" });
-  const el = h("div", { class: "view" }, card("indigo", stack(116, 16, who, title, when, row)));
-  let key = "";
-  return {
-    el,
-    sync() {
-      const m = State.meeting;
-      clear(who);
-      // Built by hand: the reminder comes even when the pill isn't on screen.
-      who.append(h("div", { class: "who-row" },
-        dot("#4285F4", 8),
-        h("span", { class: "n", text: "Calendario" }),
-        h("span", { text: m ? startsIn(m) : "" }),
-      ));
-      title.textContent = m?.title ?? "";
-      when.textContent = m ? (m.end > m.start ? `${clock(m.start)} – ${clock(m.end)}` : clock(m.start)) : "";
-      const next = `${m?.key}:${m?.link ?? ""}`;
-      if (next === key) return;
-      key = next;
-      clear(row);
-      const link = m?.link;
-      if (link) {
-        row.append(btn("Unirme", "primary", () => {
-          actions.openUrl(link);
-          actions.collapse();
-        }));
-      }
-      row.append(btn("OK", link ? "secondary" : "primary", () => actions.collapse()));
     },
   };
 }
@@ -750,7 +710,6 @@ export function buildViews(
   map.set("question", buildQuestion(actions));
   map.set("error", buildError(actions));
   map.set("ratelimit", buildRateLimit(actions));
-  map.set("meeting", buildMeeting(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());
   map.set("note", buildNote());

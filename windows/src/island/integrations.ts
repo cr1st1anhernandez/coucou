@@ -6,27 +6,16 @@ import { onEvent, Bridge, type IntegrationUpdate } from "../core/bridge";
 import { Sound } from "../core/sound";
 import { State } from "../core/state";
 import type { Island } from "./island";
-import { ingestCalendar, setMeetingHandler } from "./calendar";
 
 /** Which Credential Manager key backs each pill. */
 const KEY_FOR: Record<string, string> = {
-  integration_stripe: "stripe-api-key",
   integration_github: "github-token",
-  integration_vercel: "vercel-token",
-  integration_n8n: "n8n-api-key",
-  integration_resend: "resend-api-key",
-  integration_notion: "notion-api-key",
-  integration_calcom: "calcom-api-key",
-  integration_calendar: "calendar-ical-url",
 };
 
 const clearTimers = new Map<string, number>();
 
 export function registerIntegrationHandlers(island: Island) {
   void onEvent<IntegrationUpdate>("integration", (update) => handle(island, update));
-  setMeetingHandler((m) => {
-    if (!State.paused) island.meetingSoon(m);
-  });
   void refreshConfigured();
 }
 
@@ -49,12 +38,8 @@ function handle(island: Island, update: IntegrationUpdate) {
   if (State.paused) return;
 
   const previous = State.integrations[update.id];
-  // The calendar's raw events stay in calendar.ts; the card gets the meetings.
-  const data = update.id === "integration_calendar" && !update.error
-    ? { meetings: ingestCalendar(update.data) }
-    : update.data;
   State.integrations[update.id] = {
-    data: update.error ? (previous?.data ?? {}) : data,
+    data: update.error ? (previous?.data ?? {}) : update.data,
     error: update.error,
     loaded: update.error ? (previous?.loaded ?? false) : true,
     configured: previous?.configured ?? true,
@@ -70,10 +55,7 @@ function handle(island: Island, update: IntegrationUpdate) {
       if (State.focusId !== update.id) {
         task.pillBadge = event.success ? "finished" : "error";
       }
-      Sound.play(
-        event.success ? "finish" : "error",
-        update.id === "integration_github" ? "github" : "integrations",
-      );
+      Sound.play(event.success ? "finish" : "error", "github");
       // Same as the Swift pollers: show the compact island so the badge is seen,
       // but never steal the screen for a successful deploy.
       island.reveal();

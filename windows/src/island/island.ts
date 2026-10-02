@@ -21,7 +21,6 @@ import { h } from "../views/dom";
 import { IslandStateMachine } from "./fsm";
 import { makeCurrent, rescheduleNags, setStatusById } from "./sessions";
 import { dropQuestionCard } from "./hooks";
-import type { Meeting } from "./calendar";
 
 const BOT_OVERHANG = 40;
 /** Same margin as the Rust hit test (src-tauri/src/island.rs). */
@@ -124,18 +123,11 @@ export class Island {
         const task = State.focusTask;
         if (!task) return;
         const urls: Record<string, string> = {
-          integration_resend: "https://resend.com/emails",
-          integration_vercel: "https://vercel.com/dashboard",
           integration_github: "https://github.com",
-          integration_stripe: "https://dashboard.stripe.com/payments",
-          integration_notion: "https://notion.so",
-          integration_calcom: "https://app.cal.com/bookings",
-          integration_calendar: "https://calendar.google.com",
         };
         if (task.id === "integration_claude") {
           void Bridge.openTerminal(task.sessionCwd ?? null, task.sessionFocusUrl ?? null);
         }
-        else if (task.id === "integration_n8n") void Bridge.openN8n();
         else if (urls[task.id]) void Bridge.openUrl(urls[task.id]);
       },
       openUrl: (url) => {
@@ -371,21 +363,6 @@ export class Island {
 
   reveal() {
     this.fsm.reveal();
-  }
-
-  /**
-   * A meeting starts in five minutes: Mochi startles and the card stays up
-   * until you join or dismiss it, so it isn't missed while you're away.
-   */
-  meetingSoon(m: Meeting) {
-    State.meeting = m;
-    Sound.resume();
-    Sound.play("attach", "meeting");
-    State.isPinned = true;
-    this.alert("meeting");
-    this.engine.squash();
-    this.engine.triggerEmote("surprised", 1.2);
-    this.ensureRunning();
   }
 
   /** A short, happy note (the limit reset): Mochi smiles, then the island folds back. */
