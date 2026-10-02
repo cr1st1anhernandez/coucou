@@ -302,7 +302,7 @@ export class BotEngine {
     const t = now();
     this.slapTimes = this.slapTimes.filter((s) => t - s < 1.7);
     this.slapTimes.push(t);
-    Sound.alert("slap");
+    Sound.play("slap", "mochi");
     this.squash();
     if (this.slapTimes.length >= 3) {
       this.slapTimes = [];
@@ -310,7 +310,7 @@ export class BotEngine {
     } else {
       this.eyeOverride = "line";
       this.eyeOverrideUntil = t + 0.8;
-      setTimeout(() => Sound.alert("annoyed"), 60);
+      setTimeout(() => Sound.play("annoyed", "mochi"), 60);
     }
   }
 
@@ -335,7 +335,7 @@ export class BotEngine {
       this.anim("hands", [[1, 280, Ease.out]]);
       this.anim("sy", [[0.95, 100, Ease.out], [1.0, 260, Ease.back]]);
       this.anim("sx", [[1.04, 100, Ease.out], [1.0, 260, Ease.back]]);
-      Sound.alert("greet");
+      Sound.play("greet", "mochi");
     }, 250);
 
     setTimeout(() => { if (this.greetToken === tok) this.blink(); }, 550);
@@ -419,7 +419,7 @@ export class BotEngine {
       case "annoyed":
         this.eyeOverride = "line";
         this.eyeOverrideUntil = t + 0.8;
-        setTimeout(() => Sound.alert("annoyed"), 60);
+        setTimeout(() => Sound.play("annoyed", "mochi"), 60);
         break;
     }
   }

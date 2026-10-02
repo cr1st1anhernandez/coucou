@@ -63,7 +63,7 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
     if (!query || sending) return;
     input.value = "";
     sending = true;
-    Sound.alert("send");
+    Sound.play("send", "chat");
 
     State.chatHistory.push({ id: nextId++, role: "user", content: query });
     State.stateOverride = "thinking";
@@ -78,12 +78,12 @@ export function buildPrompt(onHeightChange: () => void): ViewHost {
       const reply = await Bridge.chatSend(query, context);
       State.chatHistory.push({ id: nextId++, role: "assistant", content: reply.text });
       State.stateOverride = null;
-      Sound.alert("finish");
+      Sound.play("finish", "chat");
     } catch (err) {
       State.stateOverride = null;
       State.noteMessage = String(err).replace(/^Error:\s*/, "");
       State.view = "note";
-      Sound.alert("error");
+      Sound.play("error", "chat");
     } finally {
       sending = false;
       State.notify();

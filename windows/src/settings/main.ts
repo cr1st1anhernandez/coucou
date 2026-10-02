@@ -5,6 +5,7 @@
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
 import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { SOUND_CUES, Sound, cueEnabled } from "../core/sound";
 import { h, clear } from "../views/dom";
 
 let settings: Settings = { ...DEFAULT_SETTINGS };
@@ -448,6 +449,41 @@ function generalSection(): HTMLElement {
   );
 }
 
+// ── Sounds section ────────────────────────────────────────────────────────────
+
+/** One switch per kind of sound, each with a ▶ to hear it first. */
+function soundsSection(): HTMLElement {
+  const list = h("div", { class: "sound-list" });
+  for (const cue of SOUND_CUES) {
+    list.append(h("div", { class: "sound-row" },
+      toggle(cueEnabled(settings.soundCues, cue.id), (v) => {
+        settings.soundCues = { ...settings.soundCues, [cue.id]: v };
+        void save();
+      }),
+      h("span", { class: "sound-label", text: cue.label }),
+      h("button", {
+        class: "play-btn",
+        title: "Escuchar",
+        text: "▶",
+        onclick: () => {
+          Sound.setVolume(settings.soundVolume);
+          void Sound.preview(cue.sample);
+        },
+      }),
+    ));
+  }
+  return h(
+    "section",
+    {},
+    h("h2", {}, h("span", { text: "Sonidos" })),
+    h("div", {
+      class: "hint",
+      text: "Elige qué suena. El interruptor de Sonido en General los silencia todos.",
+    }),
+    list,
+  );
+}
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -476,6 +512,7 @@ async function main() {
     apiSection(hasKey),
     integrationsSection(present),
     generalSection(),
+    soundsSection(),
     h("div", {
       class: "hint",
       text: "Sin telemetría. Las solicitudes de red solo van a los servicios que tú configures.",

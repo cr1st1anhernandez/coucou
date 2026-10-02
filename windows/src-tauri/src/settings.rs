@@ -2,6 +2,7 @@
 // No secret ever lands here — API keys live in the Windows Credential Manager.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// `serde(default)` on the whole struct: a settings.json written by an older
@@ -23,6 +24,9 @@ pub struct Settings {
     pub model: String,
     /// Minutes a Claude Code session may wait on the user before Mochi nags. 0 = off.
     pub waiting_alert_minutes: f64,
+    /// Which kinds of sound play, by cue id (SOUND_CUES in sound.ts). A cue
+    /// that isn't here uses its default, so new cues need no migration.
+    pub sound_cues: HashMap<String, bool>,
 }
 
 fn default_model() -> String {
@@ -47,6 +51,7 @@ impl Default for Settings {
             hooks_installed: false,
             model: default_model(),
             waiting_alert_minutes: 2.0,
+            sound_cues: HashMap::new(),
         }
     }
 }

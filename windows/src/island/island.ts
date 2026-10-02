@@ -362,7 +362,7 @@ export class Island {
    */
   nudge(chime: boolean) {
     Sound.resume();
-    if (chime) Sound.alert("question");
+    if (chime) Sound.play("question", "question");
     this.engine.squash();
     this.engine.triggerEmote("surprised", 1);
     window.setTimeout(() => this.engine.doRoll(700, 1), 350);
@@ -428,7 +428,7 @@ export class Island {
     this.uploadDone = false;
 
     this.engine.gulp();
-    Sound.alert("approve");
+    Sound.play("approve", "drop");
     this.engine.triggerEmote("happy");
     this.engine.animateMorph(0);
 
@@ -447,7 +447,7 @@ export class Island {
         State.noteMessage = String(err).replace(/^Error:\s*/, "");
         this.engine.animateMorph(0);
         this.setView("note");
-        Sound.alert("error");
+        Sound.play("error", "drop");
         window.setTimeout(() => this.setView(State.defaultView()), 2400);
       });
   }
@@ -465,12 +465,12 @@ export class Island {
     const tens = Math.floor(p * 10);
     if (tens > this.uploadTens && tens < 10) {
       this.uploadTens = tens;
-      Sound.alert("tick");
+      Sound.play("tick", "drop");
     }
 
     if (!this.uploadDone && since >= PRE_PROGRESS + dur) {
       this.uploadDone = true;
-      Sound.alert("approve");
+      Sound.play("approve", "drop");
       this.engine.triggerEmote("happy");
     }
     // The extra second is the grow-back, after which the choose card is up.
@@ -654,7 +654,7 @@ export class Island {
     this.botHoverStart = { x, y };
     this.engine.blink();
     this.engine.tgEs = 1.08;
-    Sound.alert("hover");
+    Sound.play("hover", "mochi");
     this.scheduleLove();
   }
 
@@ -666,7 +666,7 @@ export class Island {
       if (performance.now() / 1000 - this.lastLoveTime < 6) return;
       this.lastLoveTime = performance.now() / 1000;
       this.engine.triggerEmote("love");
-      Sound.alert("love");
+      Sound.play("love", "mochi");
     }, 1900);
   }
 
@@ -681,7 +681,7 @@ export class Island {
     this.prevViewBeforeConfused = State.view;
     State.stateOverride = "dizzy";
     this.engine.setState("dizzy");
-    Sound.alert("dizzy");
+    Sound.play("dizzy", "mochi");
     this.alert("confused");
     if (this.confusedRecovery != null) window.clearTimeout(this.confusedRecovery);
     this.confusedRecovery = window.setTimeout(() => {
@@ -919,6 +919,7 @@ export class Island {
   applySettings() {
     Sound.setEnabled(State.settings.soundEnabled);
     Sound.setVolume(State.settings.soundVolume);
+    Sound.setCues(State.settings.soundCues);
     this.fsm.homeToPetitDelay = State.settings.autoCloseInterval;
     rescheduleNags();
     State.notify();
