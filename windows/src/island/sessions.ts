@@ -37,6 +37,13 @@ export function setNagHandler(fn: (s: ClaudeSession) => void) {
   onNag = fn;
 }
 
+/** Called when a rate-limited session's limit resets. */
+let onRateFree: ((s: ClaudeSession) => void) | null = null;
+
+export function setRateFreeHandler(fn: (s: ClaudeSession) => void) {
+  onRateFree = fn;
+}
+
 // ── Naming ────────────────────────────────────────────────────────────────────
 
 /**
@@ -100,6 +107,7 @@ export function touchSession(
       summary: emptySummary(),
       finalMessage: null,
       focusUrl: null,
+      rateResetAt: null,
     };
     State.sessions.push(s);
   }
@@ -114,6 +122,7 @@ export function touchSession(
 
 export function endSession(id: string) {
   clearNag(id);
+  clearRate(id);
   State.sessions = State.sessions.filter((s) => s.id !== id);
   if (State.currentSessionId === id) State.currentSessionId = State.sessions[0]?.id ?? null;
   mirror();
@@ -121,7 +130,10 @@ export function endSession(id: string) {
 
 function pruneStale(now: number) {
   for (const s of State.sessions) {
-    if (now - s.lastEventAt > STALE_MS && !WAITING.has(s.status)) clearNag(s.id);
+    if (now - s.lastEventAt > STALE_MS && !WAITING.has(s.status)) {
+      clearNag(s.id);
+      clearRate(s.id);
+    }
   }
   State.sessions = State.sessions.filter((s) => now - s.lastEventAt <= STALE_MS || WAITING.has(s.status));
   if (State.currentSessionId && !State.currentSession) {
@@ -162,6 +174,10 @@ export function setStatus(s: ClaudeSession, status: SessionStatus) {
   } else {
     s.waitingSince = null;
     clearNag(s.id);
+  }
+  if (status !== "ratelimit") {
+    s.rateResetAt = null;
+    clearRate(s.id);
   }
   if (status === "finished") scheduleFinishPose();
   mirror();
@@ -268,6 +284,129 @@ export function waitingSinceLabel(s: ClaudeSession): string {
   if (s.waitingSince == null) return "";
   const time = new Date(s.waitingSince).toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" });
   return `desde ${time}`;
+}
+
+// ── Rate limit ────────────────────────────────────────────────────────────────
+
+const WEEKDAYS: Record<string, number> = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+
+/**
+ * When Claude Code says the limit resets, as a timestamp. It words it as
+ * "You've hit your session limit · resets 3:45pm", "resets Mon 12:00am",
+ * "Your limit will reset at 3pm" or "continuing automatically at 3:45pm";
+ * older builds appended a Unix time, "…limit reached|1754233200". The clock
+ * time is read in local time, the next time it comes round. Null if absent.
+ */
+export function parseResetTime(text: string, now = new Date()): number | null {
+  const epoch = text.match(/\|(\d{10})\b/);
+  if (epoch) return Number(epoch[1]) * 1000;
+  const m = text.match(
+    /\b(?:resets?|reset at|continuing automatically at)\s+(?:at\s+)?(?:(mon|tue|wed|thu|fri|sat|sun)[a-z]*\.?\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i,
+  );
+  if (!m) return null;
+  let hour = Number(m[2]);
+  const minute = m[3] ? Number(m[3]) : 0;
+  const half = m[4]?.toLowerCase();
+  if (half) {
+    if (hour < 1 || hour > 12) return null;
+    hour = (hour % 12) + (half === "pm" ? 12 : 0);
+  }
+  if (hour > 23 || minute > 59) return null;
+  const at = new Date(now);
+  at.setHours(hour, minute, 0, 0);
+  if (m[1]) {
+    at.setDate(at.getDate() + ((WEEKDAYS[m[1].toLowerCase()] - at.getDay() + 7) % 7));
+    if (at.getTime() <= now.getTime()) at.setDate(at.getDate() + 7);
+  } else if (at.getTime() <= now.getTime()) {
+    at.setDate(at.getDate() + 1);
+  }
+  return at.getTime();
+}
+
+const rateTimers = new Map<string, number>();
+/** Re-renders the countdown once a minute while a card can show it. */
+let rateTicker: number | null = null;
+
+function clearRate(id: string) {
+  const timer = rateTimers.get(id);
+  if (timer != null) window.clearTimeout(timer);
+  rateTimers.delete(id);
+  syncRateTicker();
+}
+
+/**
+ * The session hit its usage limit. One timer fires when it resets; a minute
+ * ticker keeps the countdown honest, and both stop with the limit.
+ */
+export function setRateLimited(s: ClaudeSession, resetAt: number | null) {
+  setStatus(s, "ratelimit");
+  s.rateResetAt = resetAt;
+  clearRate(s.id);
+  if (resetAt != null) {
+    rateTimers.set(
+      s.id,
+      // setTimeout tops out near 24.8 days; a weekly limit stays well under it.
+      window.setTimeout(() => {
+        rateTimers.delete(s.id);
+        const live = State.sessions.find((x) => x.id === s.id);
+        if (live?.status === "ratelimit") onRateFree?.(live);
+        syncRateTicker();
+      }, Math.max(1000, resetAt - Date.now())),
+    );
+  }
+  syncRateTicker();
+}
+
+/**
+ * A timer that wakes once a minute, and only re-renders an island that is
+ * open: a hidden one still costs nothing.
+ */
+function syncRateTicker() {
+  const needed = rateTimers.size > 0;
+  if (needed && rateTicker == null) {
+    rateTicker = window.setInterval(() => {
+      if (State.mode === "expanded") State.notify();
+    }, 30_000);
+  } else if (!needed && rateTicker != null) {
+    window.clearInterval(rateTicker);
+    rateTicker = null;
+  }
+}
+
+/** "en 1 h 22 min", "en 5 min", "en menos de 1 min". */
+function countdown(ms: number): string {
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes <= 1) return "en menos de 1 min";
+  if (minutes < 60) return `en ${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  const rest = minutes % 60;
+  if (hours >= 24) {
+    const days = Math.round(hours / 24);
+    return days === 1 ? "en 1 día" : `en ${days} días`;
+  }
+  return rest > 0 ? `en ${hours} h ${rest} min` : `en ${hours} h`;
+}
+
+/** "Se libera a las 3:45 p. m. · en 1 h 22 min" — or "pronto" if Claude didn't say. */
+export function rateResetLabel(s: ClaudeSession, now = Date.now()): string {
+  if (s.rateResetAt == null) return "Se libera pronto. Coucou te avisa en cuanto pase.";
+  const at = new Date(s.rateResetAt);
+  const time = at.toLocaleTimeString("es-MX", { hour: "numeric", minute: "2-digit" });
+  const day = new Date(now);
+  const sameDay = at.toDateString() === day.toDateString();
+  day.setDate(day.getDate() + 1);
+  const tomorrow = at.toDateString() === day.toDateString();
+  const when = sameDay
+    ? `a las ${time}`
+    : tomorrow
+      ? `mañana a las ${time}`
+      : `el ${at.toLocaleDateString("es-MX", { weekday: "long" })} a las ${time}`;
+  return `Se libera ${when} · ${countdown(s.rateResetAt - now)}`;
+}
+
+/** The sessions list's short form: "en 1 h 22 min". */
+export function rateCountdown(s: ClaudeSession, now = Date.now()): string {
+  return s.rateResetAt == null ? "" : countdown(s.rateResetAt - now);
 }
 
 // ── Summary ───────────────────────────────────────────────────────────────────

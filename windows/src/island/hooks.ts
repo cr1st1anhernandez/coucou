@@ -8,8 +8,9 @@ import { Sound } from "../core/sound";
 import { State, type ClaudeSession } from "../core/state";
 import type { Island } from "./island";
 import {
-  appendStep, endSession, headline, isBusy, makeCurrent, recordTool, resetSummary,
-  setNagHandler, setStatus, setStatusById, touchSession,
+  appendStep, endSession, headline, isBusy, makeCurrent, parseResetTime, recordTool,
+  resetSummary, setNagHandler, setRateFreeHandler, setRateLimited, setStatus, setStatusById,
+  touchSession,
 } from "./sessions";
 
 const CLAUDE_ID = "integration_claude";
@@ -27,6 +28,11 @@ interface HookPayload {
   prompt?: string;
   /** Stop carries Claude's final reply of the turn. */
   last_assistant_message?: string;
+  /** StopFailure: `rate_limit`, `overloaded`, … and the text Claude Code showed. */
+  error_type?: string;
+  error_message?: string;
+  /** Notification: `idle_prompt`, `quota_auto_resume_fired`, … */
+  notification_type?: string;
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   /** Added by coucou-hook on PostToolUse for edits, counted before truncation. */
@@ -115,6 +121,7 @@ function firstQuestion(input: Record<string, unknown>): string {
 
 export function registerHookHandlers(island: Island) {
   setNagHandler((session) => nag(island, session));
+  setRateFreeHandler((session) => rateFreed(island, session));
   void onEvent<HookPayload>("hook", (payload) => handleHook(island, payload));
 }
 
@@ -131,6 +138,25 @@ function nag(island: Island, session: ClaudeSession) {
   // Only a pending question chimes; a permission reminder stays silent.
   island.nudge(session.status === "question");
   State.notify();
+}
+
+/** The limit reset: Mochi cheers up and says so, then the island folds away. */
+function rateFreed(island: Island, session: ClaudeSession) {
+  if (State.paused) return;
+  setStatus(session, "idle");
+  Sound.play("pop", "rateFree");
+  island.announce(`Ya se liberó el límite de uso · ${session.name}`);
+  State.notify();
+}
+
+/** Says a session's limit reset, from Claude Code's own auto-resume notice. */
+const RESUMED = "quota_auto_resume_fired";
+
+function isRateLimitText(text: string): boolean {
+  const lower = text.toLowerCase();
+  return lower.includes("rate limit") || lower.includes("usage limit") ||
+    lower.includes("limit reached") || lower.includes("hit your") ||
+    lower.includes("limite d") || lower.includes("límite");
 }
 
 /** Lowers the approval card and hands the pill back. */
@@ -200,6 +226,23 @@ function handleHook(island: Island, payload: HookPayload) {
     }
   };
 
+  /** The session hit its usage limit: the amber card, with when it comes back. */
+  const limited = (text: string) => {
+    const already = session.status === "ratelimit";
+    setRateLimited(session, parseResetTime(text));
+    if (already) return;
+    appendStep(session, "Límite de uso");
+    Sound.play("rate", "rate");
+    const free = pillFree();
+    if (free) makeCurrent(session.id);
+    if (focused && free) {
+      surface("ratelimit", true);
+    } else {
+      State.setPillBadge(CLAUDE_ID, "approval");
+      island.reveal();
+    }
+  };
+
   switch (name) {
     case "SessionStart":
       setStatus(session, "idle");
@@ -244,10 +287,11 @@ function handleHook(island: Island, payload: HookPayload) {
 
     case "Notification": {
       const message = payload.message ?? "";
-      const lower = message.toLowerCase();
-      if (lower.includes("rate limit") || lower.includes("limite d") || lower.includes("límite")) {
-        setStatus(session, "ratelimit");
-        Sound.play("rate", "rate");
+      if (payload.notification_type === RESUMED) {
+        // Claude Code picked the task back up by itself: the limit is gone.
+        if (session.status === "ratelimit") setStatus(session, "working");
+      } else if (isRateLimitText(message)) {
+        limited(message);
       } else if (message.endsWith("?")) {
         asks(message);
       }
@@ -278,6 +322,10 @@ function handleHook(island: Island, payload: HookPayload) {
     }
 
     case "StopFailure": {
+      if (payload.error_type === "rate_limit") {
+        limited(payload.error_message ?? payload.message ?? "");
+        break;
+      }
       setStatus(session, "error");
       Sound.play("error", "error");
       const free = pillFree();

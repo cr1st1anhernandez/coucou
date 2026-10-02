@@ -66,6 +66,8 @@ export interface ClaudeSession {
   finalMessage: string | null;
   /** Warp's deep link to the session's tab (WARP_FOCUS_URL), if it runs in Warp. */
   focusUrl: string | null;
+  /** Date.now() at which a rate-limited session's limit resets, when Claude said. */
+  rateResetAt: number | null;
 }
 
 export interface ApprovalInfo {

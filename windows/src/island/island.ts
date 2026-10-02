@@ -344,6 +344,17 @@ export class Island {
     this.fsm.reveal();
   }
 
+  /** A short, happy note (the limit reset): Mochi smiles, then the island folds back. */
+  announce(message: string) {
+    State.noteMessage = message;
+    this.alert("note");
+    this.engine.triggerEmote("happy");
+    this.ensureRunning();
+    window.setTimeout(() => {
+      if (State.view === "note" && State.noteMessage === message) this.setView(State.defaultView());
+    }, 4000);
+  }
+
   /** The finished card is up: Mochi puffs up with pride, as on the prototype's result card. */
   celebrate() {
     window.setTimeout(() => {

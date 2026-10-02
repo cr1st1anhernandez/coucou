@@ -11,7 +11,10 @@ import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
-import { STATUS_COLORS, STATUS_LABELS, isWaiting, summaryText, waitingSinceLabel } from "../island/sessions";
+import {
+  STATUS_COLORS, STATUS_LABELS, isWaiting, rateCountdown, rateResetLabel, summaryText,
+  waitingSinceLabel,
+} from "../island/sessions";
 
 export interface ViewActions {
   setView(v: IslandViewName): void;
@@ -392,6 +395,29 @@ function buildError(actions: ViewActions): ViewHost {
   };
 }
 
+// ── Rate limit ────────────────────────────────────────────────────────────────
+
+/** The session hit its usage limit: when it comes back, counting down. */
+function buildRateLimit(actions: ViewActions): ViewHost {
+  const who = h("div");
+  const title = h("div", { class: "title", text: "Llegaste al límite de uso." });
+  const when = h("div", { class: "summary" });
+  const row = h("div", { class: "actions" },
+    btn("Abrir terminal", "primary", () => actions.openTerminal()),
+    btn("OK", "secondary", () => actions.collapse()),
+  );
+  const el = h("div", { class: "view" }, card("amber", stack(116, 16, who, title, when, row)));
+  return {
+    el,
+    sync() {
+      clear(who);
+      who.append(agentWho(State.focusTask, "Claude Code"));
+      const session = State.currentSession;
+      when.textContent = session ? rateResetLabel(session) : "";
+    },
+  };
+}
+
 // ── Finished ──────────────────────────────────────────────────────────────────
 
 /** `C:\repo\src\main.ts` → `main.ts`. */
@@ -551,9 +577,12 @@ function buildSessions(actions: ViewActions): ViewHost {
     const s = State.sessions.find((x) => x.id === id);
     if (!s) return null;
     const color = STATUS_COLORS[s.status];
+    const resets = s.status === "ratelimit" ? rateCountdown(s) : "";
     const status = isWaiting(s)
       ? `${STATUS_LABELS[s.status]} · ${waitingSinceLabel(s)}`
-      : STATUS_LABELS[s.status];
+      : resets
+        ? `${STATUS_LABELS[s.status]} · ${resets}`
+        : STATUS_LABELS[s.status];
     const ended = s.status === "finished" || s.status === "error";
     const detail = (ended && summaryText(s.summary)) || (s.steps.at(-1) ?? "");
     const r = h(
@@ -576,7 +605,7 @@ function buildSessions(actions: ViewActions): ViewHost {
     el,
     sync() {
       const next = State.sessions
-        .map((s) => [s.id, s.name, s.status, s.steps.at(-1), s.waitingSince,
+        .map((s) => [s.id, s.name, s.status, s.steps.at(-1), s.waitingSince, rateCountdown(s),
           summaryText(s.summary), s.id === State.currentSessionId].join("~"))
         .join("|");
       if (next === key) return;
@@ -618,6 +647,7 @@ export function buildViews(
   map.set("approval", buildApproval(actions));
   map.set("question", buildQuestion());
   map.set("error", buildError(actions));
+  map.set("ratelimit", buildRateLimit(actions));
   map.set("finished", buildFinished(actions));
   map.set("confused", buildConfused());
   map.set("note", buildNote());

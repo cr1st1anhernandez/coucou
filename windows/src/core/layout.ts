@@ -10,6 +10,7 @@ export type IslandViewName =
   | "approval"
   | "question"
   | "error"
+  | "ratelimit"
   | "finished"
   | "confused"
   | "upload"
@@ -73,6 +74,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   approval: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   question: { height: 160, botX: 62, botY: null, botDiameter: 56, agentMode: "column" },
   error: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
+  ratelimit: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   finished: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },
   confused: { height: 160, botX: 76, botY: null, botDiameter: 66, agentMode: "column" },
   upload: { height: 176, botX: 140, botY: 104, botDiameter: 62, agentMode: "column" },
