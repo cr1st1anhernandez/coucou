@@ -357,6 +357,15 @@ pub fn spawn_cursor_poll(app: AppHandle, gate: Arc<PollGate>) {
 
                 let _ = win.emit("cursor", CursorPayload { x, y });
             }
+            // set_collapsed lands on the main thread while this thread may be
+            // mid-tick: that last tick sees the cursor off the island and makes
+            // the window click-through right after the wake strip was told to
+            // take the mouse — and nothing would ever wake the island again.
+            // Re-asserted from this thread so it queues after that stale call.
+            if gate.collapsed.load(Ordering::Relaxed) {
+                gate.forget_ignore_state();
+                set_ignore_cursor(&app, false);
+            }
         }
     });
 }
