@@ -208,10 +208,13 @@ export interface Settings {
   pasteModes: PasteModes;
 }
 
+/** Seconds the open island waits after the mouse leaves before closing. */
+export const AUTO_CLOSE_CHOICES = [2, 3, 5, 10];
+
 export const DEFAULT_SETTINGS: Settings = {
   soundEnabled: true,
   soundVolume: 0.12,
-  autoCloseInterval: 15,
+  autoCloseInterval: 5,
   absenceInterval: 180,
   activeIntegrations: ["integration_github"],
   screen: "primary",

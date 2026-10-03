@@ -5,7 +5,7 @@
 import { h, svg, clear, dot } from "./dom";
 import { ICONS } from "./icons";
 import { Ticker } from "./ticker";
-import { State, type AgentTask, type AskedQuestion } from "../core/state";
+import { AUTO_CLOSE_CHOICES, State, type AgentTask, type AskedQuestion } from "../core/state";
 import { MAX_CARD_ROWS, washRGBA, type BotEmoteName, type IslandViewName, type Wash } from "../core/layout";
 import { createMiniBot, pruneMiniBots } from "../mochi/minibots";
 import { buildPrompt } from "./chat";
@@ -621,8 +621,6 @@ function buildNote(): ViewHost {
 }
 
 // ── In-island settings ────────────────────────────────────────────────────────
-
-const AUTO_CLOSE_CHOICES = [5, 10, 15, 30];
 
 function buildSettings(actions: ViewActions): ViewHost {
   const soundSwitch = h("button", { class: "switch", onclick: () => actions.toggleSound() });
