@@ -13,6 +13,7 @@ use std::path::PathBuf;
 pub struct Settings {
     pub sound_enabled: bool,
     pub sound_volume: f64,
+    /// Seconds before the open island closes; one of AUTO_CLOSE_CHOICES.
     pub auto_close_interval: f64,
     pub absence_interval: f64,
     pub active_integrations: Vec<String>,
@@ -52,8 +53,19 @@ impl Default for PasteModes {
     }
 }
 
+/// The only auto-close delays the settings offer (AUTO_CLOSE_CHOICES in state.ts).
+const AUTO_CLOSE_CHOICES: [f64; 4] = [2.0, 3.0, 5.0, 10.0];
+
 impl Settings {
     pub fn normalized(mut self) -> Self {
+        // Older builds offered 5–120 s: snap to the closest choice still offered.
+        let v = self.auto_close_interval;
+        if !AUTO_CLOSE_CHOICES.contains(&v) {
+            self.auto_close_interval = AUTO_CLOSE_CHOICES
+                .into_iter()
+                .min_by(|a, b| (a - v).abs().total_cmp(&(b - v).abs()))
+                .unwrap_or(5.0);
+        }
         let m = &mut self.paste_modes;
         if !m.copy && !m.warp && !m.paste {
             m.copy = true;
@@ -74,7 +86,7 @@ impl Default for Settings {
         Self {
             sound_enabled: true,
             sound_volume: 0.12,
-            auto_close_interval: 15.0,
+            auto_close_interval: 5.0,
             absence_interval: 180.0,
             active_integrations: vec!["integration_github".into()],
             screen: "primary".into(),

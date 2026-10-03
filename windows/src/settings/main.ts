@@ -4,7 +4,7 @@
 
 import "./settings.css";
 import { Bridge, onEvent, type HookStatus } from "../core/bridge";
-import { DEFAULT_SETTINGS, type Settings } from "../core/state";
+import { AUTO_CLOSE_CHOICES, DEFAULT_SETTINGS, type Settings } from "../core/state";
 import { SOUND_CUES, Sound, cueEnabled } from "../core/sound";
 import { h, clear } from "../views/dom";
 
@@ -448,14 +448,13 @@ function generalSection(): HTMLElement {
     void save();
   });
 
-  const autoClose = h("input", {
-    type: "number", min: "5", max: "120", step: "1",
-    value: String(Math.round(settings.autoCloseInterval)),
-    style: "width:72px",
-  }) as HTMLInputElement;
+  const autoClose = h("select", {}) as HTMLSelectElement;
+  for (const s of AUTO_CLOSE_CHOICES) {
+    autoClose.append(h("option", { value: String(s), text: `${s} s` }));
+  }
+  autoClose.value = String(settings.autoCloseInterval);
   autoClose.addEventListener("change", () => {
-    settings.autoCloseInterval = Math.max(5, Math.min(120, Number(autoClose.value) || 15));
-    autoClose.value = String(settings.autoCloseInterval);
+    settings.autoCloseInterval = Number(autoClose.value);
     void save();
   });
 
