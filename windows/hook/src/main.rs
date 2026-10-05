@@ -13,6 +13,9 @@
 //!   island is the whole point. No answer means empty stdout, and Claude Code
 //!   asks in the terminal exactly as if Coucou were not installed. The same
 //!   wait answers an `AskUserQuestion` from the island.
+//! * `Stop` also listens, but only for as long as the fire-and-forget budget:
+//!   Coucou answers at once, with the next prompt you queued on the island or
+//!   with nothing, and nothing lets the turn end as usual.
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
 
@@ -85,8 +88,8 @@ fn main() {
     }
     let Some((payload, event, ask_input)) = read_event() else { std::process::exit(0) };
 
-    let waits_for_answer = event == "PermissionRequest";
-    let budget = if waits_for_answer { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
+    let waits_for_answer = event == "PermissionRequest" || event == "Stop";
+    let budget = if event == "PermissionRequest" { DECISION_BUDGET } else { FIRE_AND_FORGET_BUDGET };
 
     // The worker owns every blocking call. If it overruns the budget we simply
     // stop listening and exit: the process dying takes the pipe handle with it.
@@ -98,7 +101,7 @@ fn main() {
     });
 
     if let Ok(Some(decision)) = rx.recv_timeout(budget) {
-        if let Some(json) = decision_json(&decision, ask_input.as_ref()) {
+        if let Some(json) = decision_json(&event, &decision, ask_input.as_ref()) {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{json}");
             let _ = out.flush();
@@ -108,14 +111,18 @@ fn main() {
     std::process::exit(0);
 }
 
-/// The documented PermissionRequest output. Anything we do not recognise prints
-/// nothing at all rather than guessing — silence is the safe answer.
+/// The documented PermissionRequest or Stop output. Anything we do not
+/// recognise prints nothing at all rather than guessing — silence is the safe answer.
 /// See https://code.claude.com/docs/en/hooks
 ///
 /// `answers {"<question>": "<label>"}` is the island answering an
 /// AskUserQuestion; `ask_input` is that tool's input as Claude Code sent it.
-fn decision_json(decision: &str, ask_input: Option<&serde_json::Value>) -> Option<String> {
+/// `continue "<prompt>"` is the next queued prompt, and only ever answers a Stop.
+fn decision_json(event: &str, decision: &str, ask_input: Option<&serde_json::Value>) -> Option<String> {
     let decision = decision.trim();
+    if event == "Stop" {
+        return continue_json(decision.strip_prefix("continue ")?);
+    }
     if let Some(raw) = decision.strip_prefix("answers ") {
         return answer_json(raw, ask_input?);
     }
@@ -162,6 +169,24 @@ fn answer_json(raw: &str, input: &serde_json::Value) -> Option<String> {
                 "hookEventName": "PermissionRequest",
                 "decision": { "behavior": "allow", "updatedInput": updated },
             }
+        })
+        .to_string(),
+    )
+}
+
+/// A prompt queued on the island: the documented Stop `decision: block` keeps
+/// Claude working, and `reason` is what it reads next. The prompt arrives as a
+/// JSON string so a multi-line one still travels on one line.
+fn continue_json(raw: &str) -> Option<String> {
+    let prompt: String = serde_json::from_str(raw).ok()?;
+    let prompt = prompt.trim();
+    if prompt.is_empty() {
+        return None;
+    }
+    Some(
+        serde_json::json!({
+            "decision": "block",
+            "reason": format!("The user queued their next prompt while you were working. Treat it as their new message:\n\n{prompt}"),
         })
         .to_string(),
     )
@@ -331,7 +356,7 @@ fn truncate_strings(value: &mut serde_json::Value) {
     }
 }
 
-/// Connect, send, and — for a permission request — wait for the island's word.
+/// Connect, send, and — for a permission request or a Stop — wait for the island's word.
 fn talk(payload: &str, waits_for_answer: bool) -> Option<String> {
     let mut pipe = connect()?;
 
@@ -369,25 +394,25 @@ mod tests {
     #[test]
     fn decision_json_matches_the_documented_shape() {
         assert_eq!(
-            decision_json("allow", None).unwrap(),
+            decision_json("PermissionRequest", "allow", None).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}"#
         );
         assert_eq!(
-            decision_json("deny", None).unwrap(),
+            decision_json("PermissionRequest", "deny", None).unwrap(),
             r#"{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"deny","message":"Denied from Coucou"}}}"#
         );
         // "always" is an island concept; Claude Code just gets an allow.
-        assert!(decision_json("always", None).unwrap().contains(r#""behavior":"allow""#));
+        assert!(decision_json("PermissionRequest", "always", None).unwrap().contains(r#""behavior":"allow""#));
     }
 
     #[test]
     fn anything_unrecognised_prints_nothing() {
-        assert!(decision_json("", None).is_none());
-        assert!(decision_json("maybe", None).is_none());
+        assert!(decision_json("PermissionRequest", "", None).is_none());
+        assert!(decision_json("PermissionRequest", "maybe", None).is_none());
         // The shape the app used to send must not be mistaken for a decision.
-        assert!(decision_json(r#"{"permissionDecision":"allow"}"#, None).is_none());
+        assert!(decision_json("PermissionRequest", r#"{"permissionDecision":"allow"}"#, None).is_none());
         // Answers without the question they answer go nowhere.
-        assert!(decision_json(r#"answers {"Color?":"Rojo"}"#, None).is_none());
+        assert!(decision_json("PermissionRequest", r#"answers {"Color?":"Rojo"}"#, None).is_none());
     }
 
     #[test]
@@ -400,7 +425,7 @@ mod tests {
                   "options": [{ "label": "S" }, { "label": "M" }] }
             ]
         });
-        let out = decision_json(r#"answers {"Color?":"Rojo","Size?":"S, M"}"#, Some(&input)).unwrap();
+        let out = decision_json("PermissionRequest", r#"answers {"Color?":"Rojo","Size?":"S, M"}"#, Some(&input)).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         let d = &v["hookSpecificOutput"]["decision"];
         assert_eq!(v["hookSpecificOutput"]["hookEventName"], "PermissionRequest");
@@ -409,9 +434,23 @@ mod tests {
         assert_eq!(d["updatedInput"]["answers"]["Color?"], "Rojo");
         assert_eq!(d["updatedInput"]["answers"]["Size?"], "S, M");
         // A question left unanswered hands the whole thing to the terminal.
-        assert!(decision_json(r#"answers {"Color?":"Rojo"}"#, Some(&input)).is_none());
+        assert!(decision_json("PermissionRequest", r#"answers {"Color?":"Rojo"}"#, Some(&input)).is_none());
         // So does an answer to a question that was never asked.
-        assert!(decision_json(r#"answers {"Color?":"Rojo","Other?":"x"}"#, Some(&input)).is_none());
+        assert!(decision_json("PermissionRequest", r#"answers {"Color?":"Rojo","Other?":"x"}"#, Some(&input)).is_none());
+    }
+
+    #[test]
+    fn a_queued_prompt_keeps_the_turn_going() {
+        let out = decision_json("Stop", r#"continue "corre los tests\ny arréglalos""#, None).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["decision"], "block");
+        assert!(v["reason"].as_str().unwrap().ends_with("corre los tests\ny arréglalos"));
+        // Nothing queued, or something that isn't a prompt: the turn just ends.
+        assert!(decision_json("Stop", "", None).is_none());
+        assert!(decision_json("Stop", r#"continue "  ""#, None).is_none());
+        assert!(decision_json("Stop", "allow", None).is_none());
+        // A permission request never mistakes a prompt for an answer.
+        assert!(decision_json("PermissionRequest", r#"continue "hola""#, None).is_none());
     }
 
     #[test]

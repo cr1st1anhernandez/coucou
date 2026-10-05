@@ -31,7 +31,7 @@ use claude_code::{Channel, CodeChats, CodeReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
-use pipe::Pending;
+use pipe::{Pending, Queue};
 use settings::Settings;
 
 /// Keeps spawned helpers from flashing a console window.
@@ -228,6 +228,12 @@ fn approval_decision(app: AppHandle, request_id: String, decision: String) {
 #[tauri::command]
 fn question_answer(app: AppHandle, request_id: String, answers: HashMap<String, String>) {
     pipe::answer_question(&app, &request_id, &answers);
+}
+
+/// The prompts queued on the island for a session, sent one per Stop.
+#[tauri::command]
+fn queue_set(app: AppHandle, session_id: String, prompts: Vec<String>) {
+    pipe::set_queue(&app, &session_id, prompts);
 }
 
 /// The island has the card on screen, so the long wait for a human may begin.
@@ -481,6 +487,7 @@ pub fn run() {
             gate: gate.clone(),
         })
         .manage(Pending::default())
+        .manage(Queue::default())
         .manage(Chat::default())
         .manage(CodeChats::default())
         .invoke_handler(tauri::generate_handler![
@@ -507,6 +514,7 @@ pub fn run() {
             question_answer,
             approval_ack,
             approval_decline,
+            queue_set,
             log_line,
             chat_send,
             chat_reset,

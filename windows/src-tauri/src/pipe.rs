@@ -13,12 +13,16 @@
 //   * whatever happens we drop the connection after the decision timeout, and
 //     the terminal takes over.
 //
+// `Stop` waits too, but never for a human: we answer on the spot with the next
+// prompt queued for that session, `continue "<prompt>"`, or hang up with nothing
+// and the turn ends as usual.
+//
 // What we write back is the bare word `allow` or `deny`, or for a question
 // `answers {"<question>": "<label>"}` on one line. Turning that into the
 // documented hookSpecificOutput JSON is coucou-hook's job, so the wire format
 // Claude Code expects lives in exactly one place.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -54,6 +58,43 @@ pub enum Reply {
 /// Permission requests the island has been told about.
 #[derive(Default)]
 pub struct Pending(pub Mutex<HashMap<String, mpsc::Sender<Reply>>>);
+
+/// Prompts queued on the island, per Claude Code session, sent one per Stop.
+#[derive(Default)]
+pub struct Queue(pub Mutex<HashMap<String, VecDeque<String>>>);
+
+/// Replaces a session's queue with what the island shows. Empty forgets it.
+pub fn set_queue(app: &AppHandle, session_id: &str, prompts: Vec<String>) {
+    let queue = app.state::<Queue>();
+    let mut map = queue.0.lock().unwrap();
+    let prompts: VecDeque<String> = prompts.into_iter().filter(|p| !p.trim().is_empty()).collect();
+    if prompts.is_empty() {
+        map.remove(session_id);
+    } else {
+        map.insert(session_id.to_string(), prompts);
+    }
+}
+
+/// The next prompt for a session whose turn just ended, if one is queued.
+fn peek_queued(app: &AppHandle, session_id: &str) -> Option<String> {
+    let queue = app.state::<Queue>();
+    let map = queue.0.lock().unwrap();
+    map.get(session_id)?.front().cloned()
+}
+
+/// That prompt reached the relay: it leaves the queue. Only if it is still the
+/// first one — the island may have removed it in the meantime.
+fn drop_queued(app: &AppHandle, session_id: &str, prompt: &str) {
+    let queue = app.state::<Queue>();
+    let mut map = queue.0.lock().unwrap();
+    let Some(prompts) = map.get_mut(session_id) else { return };
+    if prompts.front().map(String::as_str) == Some(prompt) {
+        prompts.pop_front();
+    }
+    if prompts.is_empty() {
+        map.remove(session_id);
+    }
+}
 
 static COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -125,6 +166,37 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+
+    let session_id = payload
+        .get("session_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+
+    if event == "Stop" {
+        // Answered before the island hears of it, so the island learns in the
+        // same event that the turn goes on with this prompt.
+        // A relay from before the queue has already hung up: the write fails and
+        // the prompt stays queued for the next Stop instead of vanishing.
+        if let Some(prompt) = peek_queued(&app, &session_id) {
+            let line = format!("continue {}\n", Value::String(prompt.clone()));
+            let sent = pipe.write_all(line.as_bytes()).await.is_ok() && pipe.flush().await.is_ok();
+            if sent {
+                drop_queued(&app, &session_id, &prompt);
+                payload["coucou_queued_prompt"] = json!(prompt);
+            }
+            log::line(format!("hook Stop — queued prompt {}", if sent { "sent" } else { "kept, relay gone" }));
+        } else {
+            log::line("hook Stop");
+        }
+        let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
+        let _ = pipe.disconnect();
+        return;
+    }
+
+    if event == "SessionEnd" {
+        set_queue(&app, &session_id, Vec::new());
+    }
 
     if event != "PermissionRequest" {
         log::line(format!("hook {event}"));
