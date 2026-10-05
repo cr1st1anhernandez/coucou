@@ -662,11 +662,10 @@ export function buildLibrary(actions: ViewActions): ViewHost {
   function renderHeading(p: LibraryProject | undefined, c: Category | undefined) {
     clear(heading);
     const sep = () => h("span", { class: "lib-crumb-sep" }, svg(ICONS.chevronRight, 10, { stroke: 2.4 }));
-    const crumb = (text: string, onClick: (() => void) | null, extra?: { color?: string; title?: string; icon?: Node }) => {
+    const crumb = (text: string, onClick: (() => void) | null, extra?: { color?: string; title?: string }) => {
       const node = onClick
         ? h("button", { class: "lib-crumb link", title: extra?.title ?? "", onclick: onClick })
         : h("b", { class: "lib-crumb", title: extra?.title ?? "" });
-      if (extra?.icon) node.append(extra.icon);
       node.append(h("span", { text }));
       if (extra?.color) node.style.setProperty("--proj", extra.color);
       if (extra?.color) node.classList.add("proj");
@@ -677,7 +676,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     const color = p.color ?? colorForProject(p.name);
     heading.append(sep(), crumb(p.name, c ? () => go(p.id) : null, { color, title: p.repo ?? p.name }));
     if (!c) return;
-    heading.append(sep(), crumb(c.label, null, { icon: c.filled ? svg(c.icon, 12) : svg(c.icon, 12, { stroke: 2 }) }));
+    heading.append(sep(), crumb(c.label, null));
   }
 
   function render() {
