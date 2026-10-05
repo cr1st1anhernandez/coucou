@@ -251,6 +251,8 @@ class AppState {
   uploadProgress = 0;
   uploadDuration = 2.4;
   fileDragOver = false;
+  /** A library file is being dragged out of the island: its own drag isn't a drop on us. */
+  libraryDragOut = false;
 
   promptContext: PromptContext | null = null;
   droppedFile: { name: string; path: string } | null = null;

@@ -324,23 +324,24 @@ fn library_list(app: AppHandle) -> Result<library::Library, String> {
 }
 
 /// A library item's buttons. `mode`: "copy" (its text), "ref" (`@"path"` for
-/// Claude Code), "warp" (copy + bring Warp up), "paste" (copy + Warp + Ctrl+V).
-/// Nothing ever presses Enter.
+/// Claude Code), "warp" (copy + bring Warp up), "paste" (copy + Warp + Ctrl+V),
+/// "file" (the file itself, to paste as an attachment), "open" (in its own app,
+/// a .docx in Word). Nothing ever presses Enter.
 #[tauri::command]
 async fn library_use(
     app: AppHandle,
     path: String,
-    kind: String,
+    kind: library::Kind,
     mode: String,
     repo: Option<String>,
 ) -> Result<(), String> {
-    let kind = match kind.as_str() {
-        "prompt" => library::Kind::Prompt,
-        "script" => library::Kind::Script,
-        _ => library::Kind::Note,
-    };
+    let p = library::inside_library(&app, &path)?;
+    match mode.as_str() {
+        "file" => return win_ui::set_clipboard_files(&[library::display_path(&p)]),
+        "open" => return win_ui::open_file(&library::display_path(&p)),
+        _ => {}
+    }
     let text = if mode == "ref" {
-        let p = library::inside_library(&app, &path)?;
         format!("@\"{}\"", library::display_path(&p))
     } else {
         library::content_for_copy(&app, &path, kind)?
@@ -361,10 +362,41 @@ async fn library_use(
     }
 }
 
-/// Opens <Documents>\mochi in Explorer.
+/// One value of an access card (a host, a password…) or its connection URL.
+/// The webview's own clipboard needs focus, which the island never takes.
 #[tauri::command]
-fn library_open_folder(app: AppHandle) -> Result<(), String> {
-    let dir = library::dir(&app)?;
+fn library_copy_text(text: String) -> Result<(), String> {
+    win_ui::set_clipboard_text(&text)
+}
+
+/// Files dropped on the library: copied into `project`, in `kind` when they
+/// were dropped on a category. The originals stay where they were.
+#[tauri::command]
+fn library_import(
+    app: AppHandle,
+    paths: Vec<String>,
+    project: String,
+    kind: Option<library::Kind>,
+) -> Result<Vec<library::Imported>, String> {
+    paths.iter().map(|p| library::import(&app, p, &project, kind)).collect()
+}
+
+/// Opens <Documents>\mochi in Explorer — or the project, or its category, the
+/// library is showing.
+#[tauri::command]
+fn library_open_folder(app: AppHandle, project: Option<String>, kind: Option<library::Kind>) -> Result<(), String> {
+    let root = library::dir(&app)?;
+    let mut dir = root.clone();
+    if let Some(project) = project.filter(|p| !p.contains(['\\', '/']) && !p.starts_with('.')) {
+        dir.push(project);
+        if let Some(kind) = kind {
+            dir.push(kind.folder());
+        }
+    }
+    // A category nobody has saved anything in yet has no folder: show its project.
+    while !dir.is_dir() && dir != root {
+        dir.pop();
+    }
     Command::new("explorer").arg(dir).spawn().map(|_| ()).map_err(|e| e.to_string())
 }
 
@@ -483,6 +515,7 @@ pub fn run() {
             let _ = app.emit_to(island::WINDOW_LABEL, "tray", "open".to_string());
         }))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_drag::init())
         .manage(Shared {
             settings: Mutex::new(loaded.clone()),
             gate: gate.clone(),
@@ -498,6 +531,8 @@ pub fn run() {
             library_list,
             library_use,
             library_open_folder,
+            library_copy_text,
+            library_import,
             idle_seconds,
             boot,
             save_settings,

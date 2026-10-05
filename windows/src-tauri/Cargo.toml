@@ -42,3 +42,4 @@ windows = { version = "0.61", features = [
   "Win32_UI_Shell_Common",
   "Win32_UI_WindowsAndMessaging",
 ] }
+tauri-plugin-drag = "2.1.1"

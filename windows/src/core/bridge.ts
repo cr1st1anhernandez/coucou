@@ -104,10 +104,20 @@ export const Bridge = {
 
   // ── Library (<Documents>\mochi) ───────────────────────────────────────────
   libraryList: () => callOrThrow<LibraryData>("library_list"),
-  /** "copy" its text, "ref" `@"path"`, "warp" copy + Warp, "paste" copy + Warp + Ctrl+V. */
+  /**
+   * "copy" its text, "ref" `@"path"`, "warp" copy + Warp, "paste" copy + Warp + Ctrl+V,
+   * "file" the file itself (pastes as an attachment), "open" in its own app.
+   */
   libraryUse: (path: string, kind: LibraryKind, mode: LibraryMode, repo: string | null) =>
     callOrThrow<void>("library_use", { path, kind, mode, repo }),
-  libraryOpenFolder: () => call<void>("library_open_folder"),
+  /** One value of an access card, or its connection URL. */
+  libraryCopyText: (text: string) => callOrThrow<void>("library_copy_text", { text }),
+  /** Copies dropped files into a project — into `kind` when dropped on a category. */
+  libraryImport: (paths: string[], project: string, kind: LibraryKind | null) =>
+    callOrThrow<LibraryImported[]>("library_import", { paths, project, kind }),
+  /** Explorer on the library, or on the project / category on screen. */
+  libraryOpenFolder: (project: string | null, kind: LibraryKind | null) =>
+    call<void>("library_open_folder", { project, kind }),
 
   /** Seconds since the last keyboard or mouse input anywhere. */
   idleSeconds: () => call<number>("idle_seconds"),
@@ -151,17 +161,32 @@ export interface CodeChatEvent {
   text: string;
 }
 
-export type LibraryKind = "prompt" | "script" | "note";
-export type LibraryMode = "copy" | "ref" | "warp" | "paste";
+export type LibraryKind = "instruction" | "access" | "document";
+export type LibraryMode = "copy" | "ref" | "warp" | "paste" | "file" | "open";
 
 export interface LibraryItem {
   kind: LibraryKind;
+  /** Instructions: "prompt" | "entorno". Documents: "hu" | "plantilla" | "otro". Accesses: "". */
+  sub: string;
   title: string;
   file: string;
   path: string;
   preview: string;
   tags: string[];
   order: number;
+  /** An access's `clave: valor` lines. */
+  fields: [string, string][];
+  /** An access's environment: "dev", "qa"… */
+  env: string;
+  size: number;
+  /** Milliseconds since 1970. */
+  modified: number | null;
+}
+
+export interface LibraryImported {
+  kind: LibraryKind;
+  title: string;
+  path: string;
 }
 
 export interface LibraryProject {
@@ -207,6 +232,8 @@ export type BridgeEvent =
 export interface DragDropPayload {
   type: "enter" | "over" | "drop" | "leave";
   paths?: string[];
+  /** Where the cursor is, in physical pixels from the webview's top left. */
+  position?: { x: number; y: number };
 }
 
 /**
