@@ -84,6 +84,9 @@ export const Bridge = {
   approvalAck: (requestId: string) => call<void>("approval_ack", { requestId }),
   /** "Nobody can act on this" — Claude Code asks in the terminal right away. */
   approvalDecline: (requestId: string) => call<void>("approval_decline", { requestId }),
+  /** The prompts queued for a session; Coucou sends the first one when its turn ends. */
+  queueSet: (sessionId: string, prompts: string[]) =>
+    call<void>("queue_set", { sessionId, prompts }),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */

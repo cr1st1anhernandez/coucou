@@ -13,8 +13,8 @@ import { buildLibrary } from "./library";
 import { buildChoose, buildUpload, buildUploading } from "./upload";
 import { renderIntegrationCard, type IntegrationCardHooks } from "./integrations";
 import {
-  STATUS_COLORS, STATUS_LABELS, isWaiting, rateCountdown, rateResetLabel, summaryText,
-  waitingSinceLabel,
+  MAX_QUEUE, STATUS_COLORS, STATUS_LABELS, isBusy, isWaiting, queuePrompt, rateCountdown,
+  rateResetLabel, summaryText, unqueuePrompt, waitingSinceLabel,
 } from "../island/sessions";
 
 export interface ViewActions {
@@ -219,11 +219,15 @@ function buildOverview(actions: ViewActions): ViewHost {
           tickerSession = task.sessionId ?? null;
           ticker.reset();
         }
+        // While Claude works you can already line up what comes next. The button
+        // takes the "Claude Code" label's place, so the session name keeps its room.
+        const session = task.id === "integration_claude" ? State.currentSession : null;
+        const queueable = !!session && (isBusy(session) || session.queue.length > 0);
         clear(who);
         who.append(
           dot(task.color, 7),
           h("span", { class: "name", text: task.name }),
-          h("span", { class: "tool", text: task.source === "claudeCode" ? "Claude Code" : "n8n" }),
+          queueable ? "" : h("span", { class: "tool", text: task.source === "claudeCode" ? "Claude Code" : "n8n" }),
         );
         const others = State.sessions.length - 1;
         if (task.id === "integration_claude" && others > 0) {
@@ -233,6 +237,15 @@ function buildOverview(actions: ViewActions): ViewHost {
             title: "Ver todas las sesiones",
             text: `+${others}`,
             onclick: () => actions.setView("sessions"),
+          }));
+        }
+        if (session && queueable) {
+          const n = session.queue.length;
+          who.append(h("button", {
+            class: n > 0 ? "queue-btn on" : "queue-btn",
+            title: "Prompts en cola: se envían cuando Claude termine",
+            text: n > 0 ? `${n} en cola` : "+ cola",
+            onclick: () => actions.setView("queue"),
           }));
         }
         if (task.steps.length > 1) {
@@ -708,6 +721,7 @@ function buildSessions(actions: ViewActions): ViewHost {
         ? `${STATUS_LABELS[s.status]} · ${resets}`
         : STATUS_LABELS[s.status];
     const ended = s.status === "finished" || s.status === "error";
+    const queued = s.queue.length > 0 ? ` · ${s.queue.length} en cola` : "";
     const detail = (ended && summaryText(s.summary)) || (s.steps.at(-1) ?? "");
     const r = h(
       "button",
@@ -718,7 +732,7 @@ function buildSessions(actions: ViewActions): ViewHost {
       },
       dot(color, 7),
       h("span", { class: "session-name", text: s.name }),
-      h("span", { class: "session-status", style: `color:${color}`, text: status }),
+      h("span", { class: "session-status", style: `color:${color}`, text: status + queued }),
       h("span", { class: "session-detail", text: detail }),
     );
     if (isWaiting(s)) r.classList.add("waiting");
@@ -730,7 +744,7 @@ function buildSessions(actions: ViewActions): ViewHost {
     sync() {
       const next = State.sessions
         .map((s) => [s.id, s.name, s.status, s.steps.at(-1), s.waitingSince, rateCountdown(s),
-          summaryText(s.summary), s.id === State.currentSessionId].join("~"))
+          summaryText(s.summary), s.id === State.currentSessionId, s.queue.length].join("~"))
         .join("|");
       if (next === key) return;
       key = next;
@@ -743,6 +757,102 @@ function buildSessions(actions: ViewActions): ViewHost {
         const r = row(s.id);
         if (r) list.append(r);
       }
+    },
+  };
+}
+
+// ── Prompt queue ──────────────────────────────────────────────────────────────
+
+/**
+ * What to tell the current session next. Each prompt waits for the turn to end,
+ * then the Stop hook hands it to Claude, which carries on without you typing.
+ */
+function buildQueue(actions: ViewActions): ViewHost {
+  const who = h("div", { class: "who" });
+  const hint = h("div", { class: "sub queue-hint" });
+  const list = h("div", { class: "queue-list" });
+  const input = h("input", {
+    type: "text",
+    class: "chat-input",
+    placeholder: "Lo siguiente que quieres pedirle…",
+    spellcheck: "false",
+  }) as HTMLInputElement;
+  const send = h("button", { class: "send-btn", title: "Poner en cola" }, svg(ICONS.plus, 11));
+  const bar = h("div", { class: "chat-bar" }, input, send);
+  const el = h(
+    "div",
+    { class: "view" },
+    h("div", { class: "card wash chat-card" }, h("div", { class: "chat-body queue-body" }, who, hint, list, bar)),
+  );
+  (el.querySelector(".card") as HTMLElement).style.setProperty("--wash", "rgba(99,102,241,0.5)");
+  let key = "";
+
+  function add() {
+    const s = State.currentSession;
+    if (!s || !queuePrompt(s, input.value)) return;
+    input.value = "";
+    actions.blip();
+    State.notify();
+  }
+
+  send.addEventListener("click", add);
+  input.addEventListener("keydown", (e) => {
+    if ((e as KeyboardEvent).key === "Enter") {
+      e.preventDefault();
+      add();
+    }
+    e.stopPropagation(); // Escape closes the island, not the field
+  });
+
+  return {
+    el,
+    sync() {
+      const s = State.currentSession;
+      const full = !!s && s.queue.length >= MAX_QUEUE;
+      input.disabled = !s || full;
+      input.placeholder = !s
+        ? "No hay sesión de Claude Code abierta."
+        : full ? "La cola está llena." : "Lo siguiente que quieres pedirle…";
+      const next = s ? [s.id, s.name, s.status, ...s.queue].join("~") : "";
+      if (next === key) return;
+      key = next;
+      clear(who);
+      clear(list);
+      if (!s) {
+        hint.textContent = "";
+        return;
+      }
+      who.append(
+        dot(STATUS_COLORS[s.status], 7),
+        h("span", { class: "name", text: s.name }),
+        h("span", { class: "tool", text: "Cola" }),
+      );
+      hint.textContent = isBusy(s)
+        ? "Se envían en orden, cada vez que Claude termine un turno."
+        : "Se envía cuando Claude termine el próximo turno.";
+      s.queue.forEach((prompt, i) => {
+        list.append(h(
+          "div",
+          { class: "queue-row" },
+          h("span", { class: "queue-n", text: String(i + 1) }),
+          h("span", { class: "queue-text", text: prompt, title: prompt }),
+          h(
+            "button",
+            {
+              class: "icon-btn queue-x",
+              title: "Quitar de la cola",
+              onclick: () => {
+                unqueuePrompt(s, i);
+                State.notify();
+              },
+            },
+            svg(ICONS.xmark, 8),
+          ),
+        ));
+      });
+    },
+    focus() {
+      input.focus();
     },
   };
 }
@@ -777,6 +887,7 @@ export function buildViews(
   map.set("note", buildNote());
   map.set("settings", buildSettings(actions));
   map.set("sessions", buildSessions(actions));
+  map.set("queue", buildQueue(actions));
   map.set("prompt", buildPrompt(onChatHeightChange));
   map.set("library", buildLibrary(actions));
   map.set("away", buildAway(actions));

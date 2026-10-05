@@ -10,7 +10,8 @@ window.requestAnimationFrame = (cb) => window.setTimeout(() => cb(performance.no
 import { State } from "../src/core/state";
 import { Island } from "../src/island/island";
 import {
-  appendStep, makeCurrent, recordTodos, setRateLimited, setStatus, startSubagent, stopSubagent, touchSession,
+  appendStep, makeCurrent, queuePrompt, recordTodos, setRateLimited, setStatus, startSubagent, stopSubagent,
+  touchSession,
 } from "../src/island/sessions";
 import { setLibraryPreview } from "../src/views/library";
 
@@ -213,6 +214,23 @@ const SCENES: Record<string, Scene> = {
       ],
     };
     island.showAway();
+  },
+  queue(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    if (!location.search.includes("empty")) {
+      queuePrompt(s, "Ahora corre tsc y cargo check, y arregla lo que falle sin advertencias nuevas");
+      queuePrompt(s, "Haz commit");
+    }
+    makeCurrent(s.id);
+    island.alert("queue");
+  },
+  "queue-overview"(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    if (location.search.includes("queued")) queuePrompt(s, "Haz commit");
+    makeCurrent(s.id);
+    island.alert("overview");
   },
   "library-empty"(island) {
     setLibraryPreview({ dir: "C:\\Users\\dev\\Documents\\mochi", projects: [] });

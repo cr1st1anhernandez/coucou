@@ -10,7 +10,7 @@ import type { Island } from "./island";
 import {
   appendStep, endSession, headline, isBusy, makeCurrent, parseResetTime, recordTodos, recordTool,
   resetSummary, setNagHandler, setRateFreeHandler, setRateLimited, setStatus, setStatusById,
-  startSubagent, stopSubagent, touchSession,
+  startSubagent, stopSubagent, takeQueued, touchSession,
 } from "./sessions";
 import { noteActivity } from "./away";
 
@@ -47,6 +47,8 @@ interface HookPayload {
   /** SubagentStart / SubagentStop: which subagent, and what kind (Explore, Plan…). */
   agent_id?: string;
   agent_type?: string;
+  /** Added by Coucou on a Stop it answered with the next queued prompt. */
+  coucou_queued_prompt?: string;
 }
 
 function lastPathComponent(p: string): string {
@@ -202,6 +204,13 @@ function dropApprovalCard(island: Island) {
 }
 
 function handleHook(island: Island, payload: HookPayload) {
+  // Already sent by Rust, paused or not: the island's copy of the queue follows.
+  const queued = payload.coucou_queued_prompt;
+  if (queued) {
+    const s = State.sessions.find((x) => x.id === payload.session_id);
+    if (s) takeQueued(s, queued);
+  }
+
   if (State.paused) {
     // Silence here used to cost Claude Code nearly two minutes: the relay waited
     // for a decision from an island that had already decided not to look. Say so,
@@ -346,6 +355,16 @@ function handleHook(island: Island, payload: HookPayload) {
     case "Stop": {
       // Any subagent still out is done by now: send them all home.
       while (session.subagents.some((a) => a.doneAt == null)) stopSubagent(session, undefined);
+      if (queued) {
+        // The turn didn't end: Claude goes straight on with the prompt you
+        // queued, so this is a new prompt, not a finished card.
+        resetSummary(session);
+        setStatus(session, "thinking");
+        appendStep(session, `↻ ${queued.slice(0, 58)}`);
+        Sound.play("peek", "prompt");
+        surface("overview", false);
+        break;
+      }
       setStatus(session, "finished");
       // Stop has no `message`: without the reply the card fell back to the last
       // tool step, and a turn "ended" on `Ejecuta · cd C:/Users/…`.
