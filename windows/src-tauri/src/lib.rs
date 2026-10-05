@@ -2,6 +2,7 @@
 
 mod claude;
 mod claude_code;
+mod drop_target;
 mod files;
 mod hooks;
 mod integrations;
