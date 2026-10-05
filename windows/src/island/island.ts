@@ -706,6 +706,8 @@ export class Island {
   private cardRows(): number {
     if (State.view === "finished") return Math.min(MAX_CARD_ROWS, State.currentSession?.summary.files.length ?? 0);
     if (State.view === "away") return Math.min(MAX_CARD_ROWS, State.away?.rows.length ?? 0);
+    // The input bar, plus one row per queued prompt.
+    if (State.view === "queue") return 1 + (State.currentSession?.queue.length ?? 0);
     if (State.view === "question") {
       const pq = State.pendingQuestion;
       const q = pq && pq.sessionId === State.currentSessionId ? pq.questions[pq.step] : null;
@@ -1116,10 +1118,10 @@ export class Island {
       if (on) view.sync();
     }
 
-    // The two chats are the only views with a text field, so they are the only
-    // time the island is allowed to take keyboard focus.
+    // The two chats and the prompt queue are the only views with a text field,
+    // so they are the only time the island is allowed to take keyboard focus.
     if (this.lastSyncedView !== State.view) {
-      const typing = (v: IslandViewName | null) => v === "prompt" || v === "library";
+      const typing = (v: IslandViewName | null) => v === "prompt" || v === "library" || v === "queue";
       const wasChat = typing(this.lastSyncedView);
       this.lastSyncedView = State.view;
       if (typing(State.view)) {

@@ -9,6 +9,7 @@
 // set when it starts waiting and cleared the moment it moves on, so a hidden
 // island still costs nothing.
 
+import { Bridge } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 import { State, type ClaudeSession, type SessionStatus, type SessionSummary } from "../core/state";
 
@@ -22,6 +23,8 @@ const STALE_MS = 3 * 60 * 60 * 1000;
 const MAX_NAME = 24;
 /** Reminders per wait, so a session you deliberately left doesn't nag forever. */
 const MAX_NAGS = 3;
+/** Most prompts a session can have queued: all of them fit on the queue card. */
+export const MAX_QUEUE = 4;
 
 /** Blocked until you act: a permission to grant or a question to answer. */
 const WAITING: ReadonlySet<SessionStatus> = new Set(["approval", "question"]);
@@ -110,6 +113,7 @@ export function touchSession(
       rateResetAt: null,
       todo: null,
       subagents: [],
+      queue: [],
     };
     State.sessions.push(s);
   }
@@ -623,4 +627,28 @@ export const STATUS_COLORS: Record<SessionStatus, string> = {
 
 export function isWaiting(s: ClaudeSession): boolean {
   return WAITING.has(s.status);
+}
+
+// ── Prompt queue ──────────────────────────────────────────────────────────────
+//
+// The queue lives in Rust, which answers the Stop hook with its first prompt;
+// the island keeps a copy to show, and pushes the whole list on every change.
+
+export function queuePrompt(s: ClaudeSession, prompt: string): boolean {
+  const text = prompt.trim();
+  if (!text || s.queue.length >= MAX_QUEUE) return false;
+  s.queue.push(text);
+  void Bridge.queueSet(s.id, s.queue);
+  return true;
+}
+
+export function unqueuePrompt(s: ClaudeSession, index: number) {
+  s.queue.splice(index, 1);
+  void Bridge.queueSet(s.id, s.queue);
+}
+
+/** Rust just sent this prompt on a Stop: it leaves the island's copy too. */
+export function takeQueued(s: ClaudeSession, prompt: string) {
+  const i = s.queue.indexOf(prompt);
+  s.queue.splice(i >= 0 ? i : 0, 1);
 }

@@ -2014,3 +2014,79 @@ input[type="range"]::-webkit-slider-thumb {
 .lib-bar {
   flex: 0 0 auto;
 }
+
+/* ── Prompt queue ───────────────────────────────────────────────────────── */
+
+.who .queue-btn {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 999px;
+  padding: 1px 7px;
+  font: 600 10.5px var(--font);
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.09);
+  cursor: default;
+}
+
+.who .queue-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.who .queue-btn.on {
+  background: rgba(99, 102, 241, 0.32);
+  color: #c7c9ff;
+}
+
+.queue-body {
+  gap: 4px;
+}
+
+/* The card body already clears Mochi; the overview's offset would double it. */
+.queue-body .who {
+  padding: 0;
+}
+
+.queue-hint {
+  font-size: 11px;
+}
+
+.queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.queue-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  flex: 0 0 28px;
+  padding: 0 4px 0 10px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.queue-n {
+  flex: 0 0 auto;
+  font: 600 10.5px var(--mono);
+  color: var(--dim-3);
+}
+
+.queue-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 400 12.5px var(--font);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-x {
+  flex: 0 0 auto;
+}

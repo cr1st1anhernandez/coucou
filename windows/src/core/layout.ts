@@ -23,6 +23,7 @@ export type IslandViewName =
   | "note"
   | "settings"
   | "sessions"
+  | "queue"
   | "library"
   | "away"
   | "greeting";
@@ -91,6 +92,7 @@ export const VIEW_LAYOUTS: Record<IslandViewName, ViewLayout> = {
   note: { height: 160, botX: 60, botY: null, botDiameter: 50, agentMode: "column" },
   settings: { height: 160, botX: 54, botY: null, botDiameter: 46, agentMode: "none" },
   sessions: { height: 200, botX: 50, botY: null, botDiameter: 42, agentMode: "none" },
+  queue: { height: 160, botX: 52, botY: null, botDiameter: 44, agentMode: "none" },
   // The library takes the whole panel; Mochi sits small beside the project tabs.
   library: { height: 320, botX: 36, botY: 64, botDiameter: 26, agentMode: "none" },
   away: { height: 160, botX: 62, botY: null, botDiameter: 58, agentMode: "column" },

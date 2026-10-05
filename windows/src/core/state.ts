@@ -85,6 +85,8 @@ export interface ClaudeSession {
   rateResetAt: number | null;
   todo: TodoProgress | null;
   subagents: Subagent[];
+  /** Prompts you queued from the island, sent one each time a turn ends. */
+  queue: string[];
 }
 
 /** One line of the "Mientras no estabas" card. */
