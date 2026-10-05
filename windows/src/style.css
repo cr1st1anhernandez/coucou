@@ -2262,6 +2262,28 @@ input[type="range"]::-webkit-slider-thumb {
   transform: scale(0.9);
 }
 
+/* The trash: red on hover, and armed after a first click, asking for a second. */
+.lib-act.del:hover {
+  color: var(--red-text);
+  background: rgba(244, 80, 94, 0.14);
+}
+
+.lib-act.del.confirm {
+  width: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 7px;
+  color: #fff;
+  background: var(--red);
+  font: 600 10.5px var(--font);
+  white-space: nowrap;
+}
+
+.acc:not(:hover) .acc-head .lib-act.del.confirm {
+  display: inline-flex;
+}
+
 /* A file dragged over the library: where it can land, and where it will. */
 .lib-drop-hint {
   display: none;

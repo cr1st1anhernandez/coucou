@@ -62,6 +62,8 @@ export const ICONS = {
   open: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
   // doc.on.doc with a folded corner — copy the file itself
   fileCopy: "M8 3.5h6.5l4 4V17a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1zM14 3.5V8h4.5M4.5 7v12.5a1 1 0 0 0 1 1H15",
+  // trash — send a library item to the Recycle Bin
+  trash: "M4 7h16M9.5 7V4.5h5V7M6.5 7l1 13h9l1-13M10 11v5.5M14 11v5.5",
   // folder
-  folder:"M3.5 6.5A1.5 1.5 0 0 1 5 5h4.4l2 2.2H19a1.5 1.5 0 0 1 1.5 1.5v9.3A1.5 1.5 0 0 1 19 19.5H5a1.5 1.5 0 0 1-1.5-1.5z",
+  folder: "M3.5 6.5A1.5 1.5 0 0 1 5 5h4.4l2 2.2H19a1.5 1.5 0 0 1 1.5 1.5v9.3A1.5 1.5 0 0 1 19 19.5H5a1.5 1.5 0 0 1-1.5-1.5z",
 } as const;

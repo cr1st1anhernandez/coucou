@@ -381,6 +381,12 @@ fn library_import(
     paths.iter().map(|p| library::import(&app, p, &project, kind)).collect()
 }
 
+/// The trash button on a library item: to the Recycle Bin, never gone for good.
+#[tauri::command]
+fn library_delete(app: AppHandle, path: String) -> Result<String, String> {
+    library::delete(&app, &path)
+}
+
 /// Opens <Documents>\mochi in Explorer — or the project, or its category, the
 /// library is showing.
 #[tauri::command]
@@ -533,6 +539,7 @@ pub fn run() {
             library_open_folder,
             library_copy_text,
             library_import,
+            library_delete,
             idle_seconds,
             boot,
             save_settings,

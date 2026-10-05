@@ -7,8 +7,9 @@
 // lines, each value one click from the clipboard; Documentos, .docx user
 // stories and templates.
 //
-// The buttons only ever copy or open: an instruction's text, a value, a file
-// (to paste as an attachment), or an `@"path"` Claude Code reads by itself.
+// The buttons copy or open: an instruction's text, a value, a file (to paste
+// as an attachment), or an `@"path"` Claude Code reads by itself. The trash
+// asks for a second click and only ever sends the file to the Recycle Bin.
 // "A Warp" and "Pegar" also bring Warp to the front (and paste, for the
 // second) — nothing presses Enter, and nothing is ever run from here. Which of
 // copy / A Warp / Pegar show up is up to the user (Ajustes → Biblioteca).
@@ -345,6 +346,45 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     }
   }
 
+  /** The trash button: a first click arms it, a second within 3 s sends the file to the Recycle Bin. */
+  function deleteBtn(item: LibraryItem, p: LibraryProject): HTMLElement {
+    let armed = 0;
+    const btn = h("button", { class: "lib-act del", title: "Borrar" }, svg(ICONS.trash, 12, { stroke: 2 }));
+    const label = h("span", { text: "¿Borrar?" });
+    const disarm = () => {
+      window.clearTimeout(armed);
+      armed = 0;
+      btn.classList.remove("confirm");
+      btn.title = "Borrar";
+      label.remove();
+    };
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!armed) {
+        Sound.play("blip");
+        btn.classList.add("confirm");
+        btn.title = "Clic otra vez para mandarlo a la Papelera";
+        btn.append(label);
+        armed = window.setTimeout(disarm, 3000);
+        return;
+      }
+      disarm();
+      void remove(item, p);
+    });
+    return btn;
+  }
+
+  async function remove(item: LibraryItem, p: LibraryProject) {
+    try {
+      await Bridge.libraryDelete(item.path);
+      Sound.play("approve");
+      await reload();
+      say(`${p.name} › ${item.title} · a la Papelera (se puede restaurar desde ahí)`, "ok");
+    } catch (err) {
+      fail(err);
+    }
+  }
+
   // ── Dragging a file out ────────────────────────────────────────────────────
 
   /**
@@ -481,7 +521,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     for (const b of MODE_BUTTONS) {
       if (modes[b.key]) acts.append(iconBtn(b.icon, b.label, () => void use(item, p, b.mode, b.done)));
     }
-    acts.append(iconBtn(ICONS.at, "Copiar @ruta para Claude Code", () => void use(item, p, "ref", REF_DONE)));
+    acts.append(iconBtn(ICONS.at, "Copiar @ruta para Claude Code", () => void use(item, p, "ref", REF_DONE)), deleteBtn(item, p));
     const row = h(
       "div",
       { class: "lib-item", title: item.preview || item.file },
@@ -508,6 +548,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
       url ? iconBtn(ICONS.link, "Copiar la URL de conexión", () => void copyText(url, `${item.title} › URL`, p)) : null,
       iconBtn(ICONS.copy, "Copiar todo", () => void use(item, p, "copy", "Copiado · pégalo con Ctrl+V")),
       iconBtn(ICONS.at, "Copiar @ruta para Claude Code", () => void use(item, p, "ref", REF_DONE)),
+      deleteBtn(item, p),
     );
     const card = h("div", { class: "acc", title: item.file }, head);
     if (item.fields.length) {
@@ -555,6 +596,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
         iconBtn(ICONS.fileCopy, "Copiar el archivo · pégalo como adjunto", () =>
           void use(item, p, "file", "Archivo copiado · pégalo como adjunto con Ctrl+V")),
         iconBtn(ICONS.at, "Copiar @ruta para Claude Code", () => void use(item, p, "ref", REF_DONE)),
+        deleteBtn(item, p),
       ),
     );
     draggable(row, item, p);
@@ -620,11 +662,10 @@ export function buildLibrary(actions: ViewActions): ViewHost {
   function renderHeading(p: LibraryProject | undefined, c: Category | undefined) {
     clear(heading);
     const sep = () => h("span", { class: "lib-crumb-sep" }, svg(ICONS.chevronRight, 10, { stroke: 2.4 }));
-    const crumb = (text: string, onClick: (() => void) | null, extra?: { color?: string; title?: string; icon?: Node }) => {
+    const crumb = (text: string, onClick: (() => void) | null, extra?: { color?: string; title?: string }) => {
       const node = onClick
         ? h("button", { class: "lib-crumb link", title: extra?.title ?? "", onclick: onClick })
         : h("b", { class: "lib-crumb", title: extra?.title ?? "" });
-      if (extra?.icon) node.append(extra.icon);
       node.append(h("span", { text }));
       if (extra?.color) node.style.setProperty("--proj", extra.color);
       if (extra?.color) node.classList.add("proj");
@@ -635,7 +676,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     const color = p.color ?? colorForProject(p.name);
     heading.append(sep(), crumb(p.name, c ? () => go(p.id) : null, { color, title: p.repo ?? p.name }));
     if (!c) return;
-    heading.append(sep(), crumb(c.label, null, { icon: c.filled ? svg(c.icon, 12) : svg(c.icon, 12, { stroke: 2 }) }));
+    heading.append(sep(), crumb(c.label, null));
   }
 
   function render() {
