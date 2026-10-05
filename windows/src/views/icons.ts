@@ -54,6 +54,14 @@ export const ICONS = {
   paste: "M9 4.5h6M8 4.5H6.5A1.5 1.5 0 0 0 5 6v13.5A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H16M9 3h6v3H9zM12 10v7M9 14l3 3 3-3",
   // at — "@ruta" for Claude Code
   at: "M16 12a4 4 0 1 1-8 0 4 4 0 0 1 8 0zm0 0v1.5a2.5 2.5 0 0 0 5 0V12a9 9 0 1 0-3.6 7.2",
+  // key — the library's Accesos
+  key: "M14.5 3.5a6 6 0 0 0-5.7 7.9L3.5 16.7v3.8h3.8v-2.2h2.2v-2.2h2.2l1.1-1.1a6 6 0 1 0 1.7-11.5zM16.5 6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z",
+  // link — an access's connection URL
+  link: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  // arrow.up.forward.square — open a document in its own app
+  open: "M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5",
+  // doc.on.doc with a folded corner — copy the file itself
+  fileCopy: "M8 3.5h6.5l4 4V17a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4.5a1 1 0 0 1 1-1zM14 3.5V8h4.5M4.5 7v12.5a1 1 0 0 0 1 1H15",
   // folder
-  folder: "M3.5 6.5A1.5 1.5 0 0 1 5 5h4.4l2 2.2H19a1.5 1.5 0 0 1 1.5 1.5v9.3A1.5 1.5 0 0 1 19 19.5H5a1.5 1.5 0 0 1-1.5-1.5z",
+  folder:"M3.5 6.5A1.5 1.5 0 0 1 5 5h4.4l2 2.2H19a1.5 1.5 0 0 1 1.5 1.5v9.3A1.5 1.5 0 0 1 19 19.5H5a1.5 1.5 0 0 1-1.5-1.5z",
 } as const;

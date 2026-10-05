@@ -129,21 +129,29 @@ const SCENES: Record<string, Scene> = {
   },
   library(island) {
     const base = "C:\\Users\\dev\\Documents\\mochi";
-    const item = (kind: "prompt" | "script" | "note", project: string, file: string, title: string, preview: string) =>
-      ({ kind, title, file, path: `${base}\\${project}\\${file}`, preview, tags: [], order: 1 });
+    type Kind = "instruction" | "access" | "document";
+    const folder = { instruction: "instrucciones", access: "accesos", document: "documentos" };
+    const item = (kind: Kind, sub: string, project: string, file: string, title: string, preview: string,
+      more: { fields?: [string, string][]; size?: number } = {}) =>
+      ({
+        kind, sub, title, file, path: `${base}\\${project}\\${folder[kind]}\\${file}`, preview, tags: [], order: 1,
+        fields: more.fields ?? [], env: kind === "access" ? "dev" : "", size: more.size ?? 1200, modified: Date.now(),
+      });
     setLibraryPreview({
       dir: base,
       projects: [
         {
           id: "coucou", name: "coucou", color: "#8B5CF6", repo: "C:\\Users\\dev\\Projects\\coucou",
           items: [
-            item("prompt", "coucou", "revisar-prs.md", "Revisa mis PRs", "Revisa mis PRs abiertos y dime qué falta para mergear cada uno."),
-            item("prompt", "coucou", "tests.md", "Tests y arregla", "Corre tsc y cargo check; arregla lo que falle sin advertencias nuevas."),
-            item("prompt", "coucou", "instalar.md", "Instala desde main", "Sigue la sección Instalar Coucou de coucou-personal.md."),
-            item("script", "coucou", "levantar-entorno.ps1", "levantar entorno", "npm run tauri dev"),
-            item("script", "coucou", "instalar.ps1", "instalar", "npm run tauri build; instalador /S"),
-            item("note", "coucou", "urls.md", "URLs", "Fork, original, Pages"),
-            item("note", "coucou", "accesos-prueba.md", "Accesos de prueba", "demo@coucou.dev / demo1234"),
+            item("instruction", "prompt", "coucou", "forma-de-trabajo.md", "Forma de trabajo", "Rama feat/*, tsc y cargo check sin advertencias, commits en inglés."),
+            item("instruction", "prompt", "coucou", "revisar-prs.md", "Revisa mis PRs", "Revisa mis PRs abiertos y dime qué falta para mergear cada uno."),
+            item("instruction", "entorno", "coucou", "levantar-windows.md", "Levantar Windows en dev", "cd windows && npm i && npm run tauri dev"),
+            item("access", "", "coucou", "postgres-dev.md", "Postgres dev", "", {
+              fields: [["host", "localhost"], ["puerto", "5432"], ["base", "coucou_dev"], ["usuario", "postgres"], ["password", "dev1234"]],
+            }),
+            item("access", "", "coucou", "redis-dev.md", "Redis dev", "", { fields: [["host", "localhost"], ["puerto", "6379"]] }),
+            item("document", "hu", "coucou", "HU-012 Login con Google.docx", "HU-012 Login con Google", "", { size: 48_000 }),
+            item("document", "plantilla", "coucou", "Plantilla HU.docx", "Plantilla HU", "", { size: 22_000 }),
           ],
         },
         { id: "api-pagos", name: "api-pagos", color: "#22C55E", repo: null, items: [] },
@@ -155,6 +163,11 @@ const SCENES: Record<string, Scene> = {
     // `?project` opens the first card instead of staying on the grid.
     if (location.search.includes("project")) {
       window.setTimeout(() => (document.querySelector(".lib-proj") as HTMLElement | null)?.click(), 300);
+    }
+    // `?project&cat=access` goes one level further, into that category.
+    const cat = new URLSearchParams(location.search).get("cat");
+    if (cat) {
+      window.setTimeout(() => (document.querySelector(`.lib-cat[data-kind="${cat}"]`) as HTMLElement | null)?.click(), 600);
     }
   },
   // A burst of steps, then the turn's last reply, the way a real turn ends.

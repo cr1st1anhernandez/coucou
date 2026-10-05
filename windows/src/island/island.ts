@@ -2,7 +2,7 @@
 // Mirrors IslandRootView.swift + IslandWindowController.swift.
 
 import { Tracked, Spring, clamp } from "../core/anim";
-import { Bridge, IS_TAURI, onDragDrop } from "../core/bridge";
+import { Bridge, IS_TAURI, onDragDrop, type DragDropPayload } from "../core/bridge";
 import {
   EXPANDED_CORNER, EXPANDED_W, NOTCH_W, PANEL_H, PANEL_W,
   MAX_CARD_ROWS, ROUNDED_CORNER, VIEW_LAYOUTS, botGlowColor, botGlowOpacity, botPosition, chatPromptHeight,
@@ -18,6 +18,7 @@ import { UploadCanvas } from "../upload/canvas";
 import { USC, UploadSeq } from "../upload/sequence";
 import { buildHeader, buildViews, type ViewActions, type ViewHost } from "../views/views";
 import { h } from "../views/dom";
+import { libraryDrop } from "../views/library";
 import { IslandStateMachine } from "./fsm";
 import { SUBAGENT_LINGER_MS, makeCurrent, rescheduleNags, setStatusById, subagentColor } from "./sessions";
 import { dropQuestionCard } from "./hooks";
@@ -481,11 +482,19 @@ export class Island {
     return null;
   }
 
-  private onDragDrop(e: { type: string; paths?: string[] }) {
+  private onDragDrop(e: DragDropPayload) {
     if (e.type !== "over") void Bridge.log(`drag ${e.type} ${e.paths?.length ?? 0} file(s)`);
     if (State.paused) return;
-    // A chat is open: the file is attached to it, no swallowing sequence.
+    // A file the library itself is dragging out passes over us on its way.
+    if (State.libraryDragOut) return;
+    // A chat is open: the file is attached to it, no swallowing sequence. In the
+    // library, only over its chat bar: anywhere else it goes into the library.
     const chat = this.dropChat;
+    if (chat === "library" && libraryDrop(e)) {
+      if (e.type === "drop") this.engine.gulp();
+      this.ensureRunning();
+      return;
+    }
     if (chat) {
       this.dropOnChat(chat, e);
       return;

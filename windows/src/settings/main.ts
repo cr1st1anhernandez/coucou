@@ -305,7 +305,7 @@ function librarySection(): HTMLElement {
       switches[i].classList.toggle("locked", locked);
       switches[i].title = locked ? "Tiene que quedar al menos una activa" : "";
     });
-    note.textContent = "Botones que aparecen en cada prompt y script de la biblioteca. Al menos uno queda activo.";
+    note.textContent = "Botones que aparecen en cada instrucción de la biblioteca. Al menos uno queda activo.";
   }
   const rows = MODES.map((m) => {
     const sw = h("button", { class: settings.pasteModes[m.key] ? "switch on" : "switch" });
@@ -326,10 +326,10 @@ function librarySection(): HTMLElement {
     "section",
     {},
     h("h2", {}, h("span", { text: "Biblioteca" })),
-    h("div", { class: "hint", text: "Tus prompts, scripts y notas viven en la carpeta Documentos\\mochi de este usuario." }),
+    h("div", { class: "hint", text: "Tus instrucciones, accesos y documentos viven en la carpeta Documentos\\mochi de este usuario." }),
     h("div", { class: "row" },
       h("label", { text: "Carpeta" }),
-      h("button", { text: "Abrir Documentos\\mochi", onclick: () => void Bridge.libraryOpenFolder() }),
+      h("button", { text: "Abrir Documentos\\mochi", onclick: () => void Bridge.libraryOpenFolder(null, null) }),
     ),
     note,
     ...rows,

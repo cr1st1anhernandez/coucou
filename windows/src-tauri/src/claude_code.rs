@@ -36,17 +36,20 @@ answering through the user's own Claude Code. Respond in the user's language. Be
 the answer is shown in a small chat bubble. No markdown formatting (no **, no ##, no bullet dashes, no tables). \
 Use plain text with line breaks. You can read files the user attaches and search, but you cannot change anything.";
 
-const LIBRARY_PROMPT: &str = "You manage the user's prompt library, which is your working directory. \
-Layout: one folder per project, named in lowercase-with-dashes. Each project folder has prompts, scripts and notas \
-subfolders and an optional proyecto.json with ruta (the repo folder on disk) and color (a hex colour). \
-A prompt is a .md file: a front matter block between --- lines with titulo, etiquetas (comma separated) and orden (a number), \
-then the prompt text exactly as the user gave it. A script keeps its own extension (.ps1, .sh, .bat, .cmd, .py, .js) and its \
-content exactly as given. A note is a .md file with the same front matter and the note text; notes may contain test or \
-development passwords, which the user wants stored as given. When the user asks to save something, decide the project \
-(ask briefly if it is really unclear), the kind (prompt, script or note) and a short title, then write the file with a \
-short dashed file name. When a file is attached, read it and store its content the same way. Never write outside your \
-working directory and never delete anything unless the user asks for it. Answer in the user's language in one or two short \
-plain sentences, and when you saved something start with: Guardado en <proyecto> > <Prompts|Scripts|Notas>: <titulo>.";
+const LIBRARY_PROMPT: &str = "You manage the user's library, which is your working directory. \
+Layout: one folder per project, named in lowercase-with-dashes. Each project folder has instrucciones, accesos and \
+documentos subfolders and an optional proyecto.json with ruta (the repo folder on disk) and color (a hex colour). \
+An instruction is a .md file: a front matter block between --- lines with titulo, tipo (prompt for how the user wants \
+Claude to work, entorno for how to bring an environment up), etiquetas (comma separated) and orden (a number), then the \
+text exactly as the user gave it. An access is a .md file with titulo and entorno (dev, qa...) in the front matter, then \
+one clave: valor line per value (host, puerto, base, usuario, password, url...): development credentials the user wants \
+stored as given, one database or service per file. Documents (.docx, .pdf, .xlsx) live as files in documentos; the user \
+adds them by dropping them on the library, and you cannot copy them, so if one is attached tell the user to drop it there. \
+When the user asks to save something, decide the project (ask briefly if it is really unclear), the kind (instruccion or \
+acceso) and a short title, then write the file with a short dashed file name. When a text file is attached, read it and \
+store its content the same way. Never write outside your working directory and never delete anything unless the user \
+asks for it. Answer in the user's language in one or two short plain sentences, and when you saved something start with: \
+Guardado en <proyecto> > <Instrucciones|Accesos>: <titulo>.";
 
 /// Read-only tools the island's chat may use without asking.
 const CHAT_TOOLS: &[&str] = &[

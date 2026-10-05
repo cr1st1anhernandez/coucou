@@ -1698,25 +1698,59 @@ input[type="range"]::-webkit-slider-thumb {
 .lib-heading {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 2px;
   flex: 1 1 auto;
   min-width: 0;
 }
 
-/* Big on purpose: which project you're in has to read at a glance. */
-.lib-title {
-  font: 700 17px var(--font);
+/* The path, big on purpose: which project you're in has to read at a glance. */
+.lib-crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font: 700 16px var(--font);
   letter-spacing: -0.01em;
   color: var(--ink);
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  min-width: 0;
+  cursor: default;
 }
 
-.lib-back {
-  padding: 0 9px 0 6px;
-  gap: 3px;
+.lib-crumb span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-crumb.link {
+  color: var(--dim-2);
+}
+
+.lib-crumb.link:hover {
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.lib-crumb.proj {
+  color: var(--proj);
+}
+
+.lib-crumb.link.proj {
+  color: color-mix(in srgb, var(--proj) 65%, var(--dim-2));
+}
+
+.lib-crumb.link.proj:hover {
+  color: var(--proj);
+}
+
+.lib-crumb-sep {
+  display: grid;
+  place-items: center;
+  color: var(--dim-4);
+  flex: 0 0 auto;
 }
 
 .lib-top-btn {
@@ -1756,7 +1790,6 @@ input[type="range"]::-webkit-slider-thumb {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 7px;
 }
 
@@ -1858,43 +1891,146 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--ink);
 }
 
-.lib-col {
+/* A project's three categories. */
+.lib-cols.cats {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.lib-cat {
+  --proj: #8b8f97;
+  position: relative;
   min-width: 0;
-  min-height: 0;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 3px;
+  padding: 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
   background: var(--card-flat);
-  border-radius: 13px;
-  padding: 7px 6px 6px;
+  text-align: left;
+  overflow: hidden;
+  cursor: default;
+  transition: border-color 0.12s ease-out, background 0.12s ease-out, transform 0.08s ease-out;
 }
 
-.lib-col-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 4px 5px;
-  font: 600 10px var(--font);
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-  color: var(--dim-2);
+.lib-cat:hover {
+  border-color: color-mix(in srgb, var(--proj) 55%, transparent);
+  background: color-mix(in srgb, var(--proj) 8%, var(--card-flat));
 }
 
-.lib-col-head i {
-  margin-left: auto;
+.lib-cat:active {
+  transform: scale(0.98);
+}
+
+.lib-cat-icon {
+  position: absolute;
+  left: 14px;
+  top: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  color: var(--proj);
+  background: color-mix(in srgb, var(--proj) 14%, transparent);
+}
+
+.lib-cat-n {
+  position: absolute;
+  right: 14px;
+  top: 12px;
+  font: 700 22px var(--font);
   font-style: normal;
   color: var(--dim-4);
-  font-weight: 500;
 }
 
-.lib-list {
-  flex: 1 1 auto;
-  min-height: 0;
+.lib-cat b {
+  font: 700 16px var(--font);
+  color: var(--ink);
+}
+
+.lib-cat-sum {
+  max-width: 100%;
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* One category, the whole width. */
+.lib-cols.list {
+  display: block;
+  position: relative;
+  border-radius: 13px;
+  border: 1px solid transparent;
+  background: var(--card-flat);
+  overflow: hidden;
+}
+
+.lib-scroll {
+  height: 100%;
   overflow-y: auto;
+  padding: 7px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.lib-rows {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.lib-grid.acc-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: start;
+}
+
+.lib-sub {
+  padding: 6px 4px 5px;
+  font: 600 9.5px var(--font);
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--dim-4);
+}
+
+.lib-sub:first-child {
+  padding-top: 0;
+}
+
+.lib-chips {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 6px;
+}
+
+.lib-chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: var(--dim-2);
+  font: 600 10.5px var(--font);
+  cursor: default;
+}
+
+.lib-chip:hover {
+  color: var(--ink);
+}
+
+.lib-chip.on {
+  background: var(--tab-on);
+  color: var(--ink);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .lib-none {
@@ -1907,7 +2043,7 @@ input[type="range"]::-webkit-slider-thumb {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 5px 5px 8px;
+  padding: 6px 6px 6px 12px;
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.04);
   min-width: 0;
@@ -1918,6 +2054,11 @@ input[type="range"]::-webkit-slider-thumb {
   background: rgba(255, 255, 255, 0.08);
 }
 
+.lib-item.dragging,
+.acc.dragging {
+  opacity: 0.4;
+}
+
 .lib-item-text {
   display: flex;
   flex-direction: column;
@@ -1926,7 +2067,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .lib-item-text b {
-  font: 600 11.5px var(--font);
+  font: 600 12px var(--font);
   color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
@@ -1934,11 +2075,163 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .lib-item-text span {
-  font: 400 10px var(--font);
+  font: 400 10.5px var(--font);
   color: var(--dim-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.lib-tag {
+  margin-right: 5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font: 700 8.5px var(--font);
+  font-style: normal;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: 1px;
+}
+
+.lib-tag.prompt {
+  color: #c7d2fe;
+  background: rgba(99, 102, 241, 0.22);
+}
+
+.lib-tag.entorno {
+  color: #a7f3d0;
+  background: rgba(52, 211, 153, 0.16);
+}
+
+/* A document: its app's badge, then name, size and date. */
+.lib-item.doc {
+  padding-left: 7px;
+  gap: 8px;
+}
+
+.doc-badge {
+  width: 20px;
+  height: 24px;
+  flex: 0 0 20px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  font: 800 9px var(--font);
+  color: #fff;
+}
+
+/* An access: its values, each one click from the clipboard. */
+.acc {
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.04);
+  padding: 5px 5px 5px 9px;
+  min-width: 0;
+}
+
+.acc:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.acc-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.acc-head b {
+  flex: 1 1 auto;
+  min-width: 0;
+  font: 600 12px var(--font);
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acc-env {
+  flex: 0 0 auto;
+  padding: 1px 4px;
+  border-radius: 4px;
+  font: 600 8.5px var(--font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--amber);
+  background: rgba(245, 165, 36, 0.14);
+}
+
+/* Its buttons show on hover, so the name gets the whole line otherwise. */
+.acc-head .lib-act {
+  display: none;
+}
+
+.acc:hover .acc-head .lib-act {
+  display: grid;
+}
+
+.acc-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 1px 6px;
+  margin-top: 3px;
+}
+
+.acc-k {
+  padding: 2px 0;
+  font: 400 9.5px var(--mono);
+  color: var(--dim-4);
+}
+
+.acc-v {
+  position: relative;
+  min-width: 0;
+  padding: 1px 18px 1px 4px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: #d6d9de;
+  font: 400 10.5px var(--mono);
+  text-align: left;
+  cursor: copy;
+}
+
+.acc-v span {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acc-v svg {
+  position: absolute;
+  right: 3px;
+  top: 50%;
+  transform: translateY(-50%);
+  opacity: 0;
+  color: var(--dim-2);
+}
+
+.acc-v:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.acc-v:hover svg {
+  opacity: 1;
+}
+
+.acc-v.copied {
+  background: rgba(52, 211, 153, 0.18);
+  color: var(--green-2);
+}
+
+.acc-none {
+  margin-top: 2px;
+  font: 400 10.5px var(--font);
+  color: var(--dim-3);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .lib-acts {
@@ -1957,7 +2250,7 @@ input[type="range"]::-webkit-slider-thumb {
   display: grid;
   place-items: center;
   cursor: default;
-  transition: background 0.12s, color 0.12s, transform 0.08s;
+  transition: background 0.12s, color 0.12s, transform 0.08s, opacity 0.12s;
 }
 
 .lib-act:hover {
@@ -1967,6 +2260,76 @@ input[type="range"]::-webkit-slider-thumb {
 
 .lib-act:active {
   transform: scale(0.9);
+}
+
+/* A file dragged over the library: where it can land, and where it will. */
+.lib-drop-hint {
+  display: none;
+  font: 600 11px var(--font);
+  font-style: normal;
+  color: var(--green-2);
+}
+
+.dragging-file .lib-proj,
+.dragging-file .lib-cat {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+.dragging-file .lib-cat.suggest {
+  border-color: rgba(52, 211, 153, 0.5);
+}
+
+.dragging-file .lib-proj span,
+.dragging-file .lib-proj i,
+.dragging-file .lib-cat-sum {
+  display: none;
+}
+
+.dragging-file .lib-drop-hint {
+  display: block;
+}
+
+.lib-proj.over,
+.lib-cat.over {
+  border: 1px solid var(--green-2) !important;
+  background: color-mix(in srgb, var(--green-2) 8%, var(--card-flat));
+}
+
+.dragging-file .lib-cols.list {
+  border: 1px dashed rgba(52, 211, 153, 0.4);
+}
+
+.lib-cols.list.over {
+  border: 1px solid var(--green-2);
+}
+
+.lib-drop-veil {
+  display: none;
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  background: rgba(14, 15, 17, 0.88);
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  pointer-events: none;
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+}
+
+.lib-drop-veil b {
+  font: 600 12px var(--font);
+  color: var(--dim-2);
+}
+
+.lib-cols.list.over .lib-drop-veil b {
+  color: var(--green-2);
+}
+
+.dragging-file .lib-drop-veil {
+  display: flex;
 }
 
 .lib-status {
