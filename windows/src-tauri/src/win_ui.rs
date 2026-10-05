@@ -1,8 +1,8 @@
 // Small pieces of the Windows shell the island needs: the file picker behind
-// "Suelta tus archivos aquí", the clipboard and "open" for the library, and how long the
+// "Suelta tus archivos aquí", the clipboard, "open" and the Recycle Bin for the library, and how long the
 // user has been away from the keyboard and mouse.
 
-use windows::core::{HSTRING, PWSTR};
+use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{GlobalFree, HANDLE, HGLOBAL, HWND};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoTaskMemFree, CoUninitialize, CLSCTX_INPROC_SERVER,
@@ -15,7 +15,10 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use windows::Win32::System::Ole::{CF_HDROP, CF_UNICODETEXT};
 use windows::Win32::System::SystemInformation::GetTickCount;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetLastInputInfo, LASTINPUTINFO};
-use windows::Win32::UI::Shell::{FileOpenDialog, IFileOpenDialog, ShellExecuteW, DROPFILES, SIGDN_FILESYSPATH};
+use windows::Win32::UI::Shell::{
+    FileOpenDialog, IFileOpenDialog, SHFileOperationW, ShellExecuteW, DROPFILES, FOF_ALLOWUNDO, FOF_NOCONFIRMATION,
+    FOF_NOERRORUI, FOF_SILENT, FO_DELETE, SHFILEOPSTRUCTW, SIGDN_FILESYSPATH,
+};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 /// The standard Windows "Open" dialog, owned by the island so it comes up in
@@ -122,6 +125,25 @@ pub fn open_file(path: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err("Windows no pudo abrir ese archivo.".into())
+    }
+}
+
+/// Sends a file to the Recycle Bin, never deleting it outright: a slip in the
+/// library can still be undone from there.
+pub fn recycle(path: &str) -> Result<(), String> {
+    // pFrom is a list: each path ends in a NUL, the list in one more.
+    let from: Vec<u16> = path.encode_utf16().chain([0, 0]).collect();
+    let mut op = SHFILEOPSTRUCTW {
+        wFunc: FO_DELETE,
+        pFrom: PCWSTR(from.as_ptr()),
+        fFlags: (FOF_ALLOWUNDO.0 | FOF_NOCONFIRMATION.0 | FOF_SILENT.0 | FOF_NOERRORUI.0) as u16,
+        ..Default::default()
+    };
+    let code = unsafe { SHFileOperationW(&mut op) };
+    if code == 0 && !op.fAnyOperationsAborted.as_bool() {
+        Ok(())
+    } else {
+        Err(format!("No se pudo mandar a la Papelera (código {code})."))
     }
 }
 

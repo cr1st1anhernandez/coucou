@@ -364,6 +364,26 @@ fn free_name(dir: &Path, source: &Path) -> PathBuf {
         .unwrap_or(first)
 }
 
+/// Sends one saved item to the Recycle Bin. Only files inside a project's
+/// category folder: never a project, a folder or anything outside the library.
+pub fn delete(app: &AppHandle, path: &str) -> Result<String, String> {
+    let p = inside_library(app, path)?;
+    let root = dir(app)?.canonicalize().map_err(|e| e.to_string())?;
+    if !p.is_file() || !is_item_path(&root, &p) {
+        return Err("Solo se pueden borrar archivos de la biblioteca.".into());
+    }
+    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+    crate::win_ui::recycle(&display_path(&p))?;
+    Ok(name)
+}
+
+/// `<root>\<project>\<instrucciones|accesos|documentos>\<file>`, and nothing else.
+fn is_item_path(root: &Path, p: &Path) -> bool {
+    let Some(folder) = p.parent() else { return false };
+    let Some(project) = folder.parent() else { return false };
+    project.parent() == Some(root) && KINDS.iter().any(|(name, _)| folder.file_name().is_some_and(|f| f == *name))
+}
+
 /// Refuses any path outside the library: the island can't read arbitrary files.
 pub fn inside_library(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
     let root = dir(app)?.canonicalize().map_err(|e| e.to_string())?;
@@ -469,6 +489,17 @@ mod tests {
         assert!(kinds.contains(&("ideas.md", Kind::Instruction)));
         assert!(LEGACY.iter().all(|k| !p.join(k).exists()));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn only_items_inside_a_category_can_be_deleted() {
+        let root = Path::new(r"C:\mochi");
+        assert!(is_item_path(root, Path::new(r"C:\mochi\duo\accesos\pg.md")));
+        assert!(is_item_path(root, Path::new(r"C:\mochi\duo\documentos\HU-1.docx")));
+        assert!(!is_item_path(root, Path::new(r"C:\mochi\duo\proyecto.json")));
+        assert!(!is_item_path(root, Path::new(r"C:\mochi\duo\otra\x.md")));
+        assert!(!is_item_path(root, Path::new(r"C:\mochi\duo\accesos\sub\x.md")));
+        assert!(!is_item_path(root, Path::new(r"C:\mochi\duo")));
     }
 
     #[test]

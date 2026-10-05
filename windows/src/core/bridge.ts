@@ -115,6 +115,8 @@ export const Bridge = {
   /** Copies dropped files into a project — into `kind` when dropped on a category. */
   libraryImport: (paths: string[], project: string, kind: LibraryKind | null) =>
     callOrThrow<LibraryImported[]>("library_import", { paths, project, kind }),
+  /** Sends a saved item to the Recycle Bin; gives back its file name. */
+  libraryDelete: (path: string) => callOrThrow<string>("library_delete", { path }),
   /** Explorer on the library, or on the project / category on screen. */
   libraryOpenFolder: (project: string | null, kind: LibraryKind | null) =>
     call<void>("library_open_folder", { project, kind }),
