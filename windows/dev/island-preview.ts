@@ -152,6 +152,10 @@ const SCENES: Record<string, Scene> = {
     });
     island.alert("library");
     window.setTimeout(() => island["views"].get("library")?.focus?.(), 50);
+    // `?project` opens the first card instead of staying on the grid.
+    if (location.search.includes("project")) {
+      window.setTimeout(() => (document.querySelector(".lib-proj") as HTMLElement | null)?.click(), 300);
+    }
   },
   subagents(island) {
     const s = session("a", "coucou");

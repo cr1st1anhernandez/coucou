@@ -1693,39 +1693,28 @@ input[type="range"]::-webkit-slider-thumb {
   flex: 0 0 36px;
 }
 
-.lib-tabs {
+.lib-heading {
   display: flex;
-  gap: 5px;
+  align-items: center;
+  gap: 8px;
   flex: 1 1 auto;
   min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 
-.lib-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: var(--card-flat);
-  color: var(--dim-2);
-  font: 600 11px var(--font);
-  white-space: nowrap;
-  cursor: default;
-  flex: 0 0 auto;
-}
-
-.lib-tab:hover {
-  color: #c5c8cd;
-}
-
-.lib-tab.on {
-  background: var(--tab-on);
-  border-color: rgba(255, 255, 255, 0.2);
+/* Big on purpose: which project you're in has to read at a glance. */
+.lib-title {
+  font: 700 17px var(--font);
+  letter-spacing: -0.01em;
   color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.lib-back {
+  padding: 0 9px 0 6px;
+  gap: 3px;
 }
 
 .lib-top-btn {
@@ -1771,6 +1760,82 @@ input[type="range"]::-webkit-slider-thumb {
 
 .lib-cols.empty {
   display: flex;
+}
+
+.lib-cols.grid {
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  grid-auto-rows: 74px;
+  align-content: start;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+.lib-proj {
+  --proj: #8b8f97;
+  position: relative;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 3px;
+  padding: 0 12px 0 16px;
+  border-radius: 13px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: var(--card-flat);
+  text-align: left;
+  overflow: hidden;
+  cursor: default;
+  transition: border-color 0.12s ease-out, transform 0.08s ease-out;
+}
+
+/* The project's colour, as a stripe down the left edge. */
+.lib-proj::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--proj);
+}
+
+.lib-proj:hover {
+  border-color: color-mix(in srgb, var(--proj) 60%, transparent);
+  background: color-mix(in srgb, var(--proj) 10%, var(--card-flat));
+}
+
+.lib-proj:active {
+  transform: scale(0.98);
+}
+
+.lib-proj b {
+  max-width: 100%;
+  font: 700 15px var(--font);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-proj span {
+  font: 400 11px var(--font);
+  color: var(--dim-2);
+}
+
+.lib-proj i {
+  max-width: 100%;
+  font: 400 10px var(--mono);
+  font-style: normal;
+  color: var(--dim-4);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-proj i:empty {
+  display: none;
 }
 
 .lib-empty {
