@@ -1,5 +1,7 @@
-// The library — <Documents>\mochi, one tab per project, its prompts, scripts
-// and notes side by side, and a chat that files new things away.
+// The library — <Documents>\mochi: a grid of projects to pick from, then that
+// project's prompts, scripts and notes side by side under its name in large
+// type, so you always know whose prompt you are copying. A chat at the bottom
+// files new things away.
 //
 // The buttons only ever copy: a prompt's text, a script or note as it is, or
 // an `@"path"` Claude Code reads by itself. "A Warp" and "Pegar" also bring
@@ -27,6 +29,13 @@ const COLUMNS: { kind: LibraryKind; label: string; icon: string; filled: boolean
   { kind: "script", label: "Scripts", icon: ICONS.terminal, filled: false },
   { kind: "note", label: "Notas", icon: ICONS.doc, filled: true },
 ];
+
+const SINGULAR: Record<LibraryKind, string> = { prompt: "Prompt", script: "Script", note: "Nota" };
+
+/** `C:\Users\dev\Projects\duo` → `duo`. */
+function lastFolder(path: string): string {
+  return path.split(/[\\/]+/).filter(Boolean).at(-1) ?? path;
+}
 
 const SORT_PROMPT =
   "Ordena la biblioteca: revisa todos los proyectos, pon títulos claros, etiquetas útiles y el orden (los más usados primero), " +
@@ -62,6 +71,7 @@ function iconBtn(path: string, title: string, onClick: () => void, filled = fals
 
 export function buildLibrary(actions: ViewActions): ViewHost {
   let data: LibraryData | null = null;
+  /** The project on screen; null is the grid of projects. */
   let current: string | null = null;
   let loading = false;
   let busy = false;
@@ -71,7 +81,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
   let streamed = "";
   let renderedKey = "";
 
-  const tabs = h("div", { class: "lib-tabs" });
+  const heading = h("div", { class: "lib-heading" });
   const folderBtn = h(
     "button",
     { class: "lib-top-btn", title: "Abrir la carpeta Documentos\\mochi", onclick: () => void Bridge.libraryOpenFolder() },
@@ -98,7 +108,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
   const body = h(
     "div",
     { class: "lib-body" },
-    h("div", { class: "lib-top" }, h("div", { class: "lib-bot-spot" }), tabs, folderBtn, sortBtn),
+    h("div", { class: "lib-top" }, h("div", { class: "lib-bot-spot" }), heading, folderBtn, sortBtn),
     cols,
     statusLine,
     attach.chip,
@@ -127,7 +137,8 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     loading = true;
     try {
       data = previewData ?? (await Bridge.libraryList());
-      if (!data.projects.some((p) => p.id === current)) current = data.projects[0]?.id ?? null;
+      // A project that's gone (renamed, deleted) sends you back to the grid.
+      if (!data.projects.some((p) => p.id === current)) current = null;
     } catch (err) {
       say(String(err).replace(/^Error:\s*/, ""), "err");
     } finally {
@@ -179,7 +190,7 @@ export function buildLibrary(actions: ViewActions): ViewHost {
       await Bridge.libraryUse(item.path, item.kind, mode, project.repo);
       Sound.play("approve");
       actions.emote("wink");
-      say(`${item.title} · ${done}`, "ok");
+      say(`${project.name} › ${item.title} · ${done}`, "ok");
     } catch (err) {
       Sound.play("error", "chat");
       say(String(err).replace(/^Error:\s*/, ""), "err");
@@ -213,28 +224,69 @@ export function buildLibrary(actions: ViewActions): ViewHost {
     );
   }
 
+  function open(id: string | null) {
+    current = id;
+    renderedKey = "";
+    actions.blip();
+    State.notify();
+  }
+
+  /** "3 prompts · 1 script", leaving out what the project has none of. */
+  function counts(project: LibraryProject): string {
+    const parts = COLUMNS.map((c) => {
+      const n = project.items.filter((i) => i.kind === c.kind).length;
+      return n > 0 ? `${n} ${(n === 1 ? SINGULAR[c.kind] : c.label).toLowerCase()}` : "";
+    }).filter(Boolean);
+    return parts.join(" · ") || "Vacío";
+  }
+
+  function projectCard(project: LibraryProject): HTMLElement {
+    // The repo folder, only when it says something the name doesn't.
+    const repo = project.repo ? lastFolder(project.repo) : "";
+    const card = h(
+      "button",
+      { class: "lib-proj", title: project.repo ?? project.name, onclick: () => open(project.id) },
+      h("b", { text: project.name }),
+      h("span", { text: counts(project) }),
+      h("i", { text: repo.toLowerCase() === project.name.toLowerCase() ? "" : repo }),
+    );
+    card.style.setProperty("--proj", project.color ?? colorForProject(project.name));
+    return card;
+  }
+
+  function renderHeading(project: LibraryProject | undefined) {
+    clear(heading);
+    if (!project) {
+      heading.append(h("b", { class: "lib-title", text: "Biblioteca" }));
+      return;
+    }
+    const color = project.color ?? colorForProject(project.name);
+    const name = h("b", { class: "lib-title", text: project.name, title: project.repo ?? project.name });
+    name.style.color = color;
+    heading.append(
+      h(
+        "button",
+        { class: "lib-top-btn lib-back", title: "Volver a los proyectos", onclick: () => open(null) },
+        svg(ICONS.chevronLeft, 11, { stroke: 2.4 }),
+        h("span", { text: "Proyectos" }),
+      ),
+      dot(color, 9),
+      name,
+    );
+  }
+
   function render() {
-    clear(tabs);
     clear(cols);
     const projects = data?.projects ?? [];
-    for (const p of projects) {
-      tabs.append(h(
-        "button",
-        {
-          class: p.id === current ? "lib-tab on" : "lib-tab",
-          title: p.repo ?? p.name,
-          onclick: () => {
-            current = p.id;
-            renderedKey = "";
-            actions.blip();
-            State.notify();
-          },
-        },
-        dot(p.color ?? colorForProject(p.name), 6),
-        h("span", { text: p.name }),
-      ));
-    }
     const project = projects.find((p) => p.id === current);
+    renderHeading(project);
+    const grid = !project && projects.length > 0;
+    cols.classList.toggle("grid", grid);
+    if (grid) {
+      cols.classList.remove("empty");
+      for (const p of projects) cols.append(projectCard(p));
+      return;
+    }
     if (!project) {
       cols.classList.add("empty");
       cols.append(h(
