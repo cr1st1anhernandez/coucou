@@ -468,7 +468,9 @@ body {
   color: var(--dim-2);
 }
 
+/* Block, so a long step ends in "…" instead of running out of the card. */
 .ticker-row .tick-text {
+  display: block;
   font: 500 13px var(--font);
   white-space: nowrap;
   overflow: hidden;

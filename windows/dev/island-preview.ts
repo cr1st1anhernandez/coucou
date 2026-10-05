@@ -157,6 +157,30 @@ const SCENES: Record<string, Scene> = {
       window.setTimeout(() => (document.querySelector(".lib-proj") as HTMLElement | null)?.click(), 300);
     }
   },
+  // A burst of steps, then the turn's last reply, the way a real turn ends.
+  ticker(island) {
+    const s = session("a", "coucou");
+    setStatus(s, "working");
+    makeCurrent(s.id);
+    island.alert("overview");
+    const steps = ["Lee · ticker.ts", "Edita · views.ts", "Ejecuta · cd /c/Users/dev/claude/projects && git status --short"];
+    steps.forEach((t, i) => window.setTimeout(() => { appendStep(s, t); State.notify(); }, 400 + i * 60));
+    window.setTimeout(() => {
+      appendStep(s, "Ya uní las dos ramas a main y la instalé.");
+      setStatus(s, "finished");
+      State.notify();
+    }, 700);
+    // `?away` leaves the overview mid-scroll and comes back, as the finished
+    // card or the auto-close do in real use.
+    if (location.search.includes("away")) {
+      window.setTimeout(() => island.alert("finished"), 760);
+      window.setTimeout(() => island.alert("overview"), 1600);
+    }
+    if (location.search.includes("hide")) {
+      window.setTimeout(() => { State.isPinned = false; island.collapse(); }, 760);
+      window.setTimeout(() => island.alert("overview"), 2600);
+    }
+  },
   subagents(island) {
     const s = session("a", "coucou");
     setStatus(s, "working");
