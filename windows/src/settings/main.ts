@@ -346,6 +346,9 @@ function phoneSection(): HTMLElement {
   const dot = statusDot(false);
   const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
   const section = h("section", {}, h("h2", {}, dot, h("span", { text: "iPhone" })), body);
+  /** The code on screen survives a redraw until it expires. */
+  let pairing: { code: string; expiresAt: number } | null = null;
+  let pairTimer: number | null = null;
 
   async function draw() {
     const status = settings.phoneEnabled ? await Bridge.phoneStatus() : null;
@@ -396,10 +399,66 @@ function phoneSection(): HTMLElement {
         text: `La PWA todavía no está en ${status.webDir}. Despliégala con npm run deploy desde su proyecto.`,
       }));
     }
+
+    if (!status.running) return;
+    body.append(pairRow(), await deviceList());
+  }
+
+  /** "Emparejar iPhone" → a big one-time code, gone after 5 minutes. */
+  function pairRow(): HTMLElement {
+    const row = h("div", { class: "row" });
+    if (pairing && pairing.expiresAt > Date.now()) {
+      const left = Math.max(1, Math.round((pairing.expiresAt - Date.now()) / 60_000));
+      row.append(
+        h("label", { text: "Código" }),
+        h("span", { class: "pair-code", text: `${pairing.code.slice(0, 3)} ${pairing.code.slice(3)}` }),
+        h("span", { class: "hint", text: `Escríbelo en la app del iPhone. Vale ${left} min y una sola vez.` }),
+      );
+      return row;
+    }
+    row.append(
+      h("label", { text: "Nuevo iPhone" }),
+      h("button", {
+        class: "primary",
+        text: "Emparejar iPhone",
+        onclick: async () => {
+          pairing = await Bridge.phonePairCode();
+          if (pairTimer != null) window.clearTimeout(pairTimer);
+          // Redraws once it expires so a dead code never stays on screen.
+          if (pairing) pairTimer = window.setTimeout(() => { pairing = null; void draw(); }, pairing.expiresAt - Date.now());
+          void draw();
+        },
+      }),
+    );
+    return row;
+  }
+
+  async function deviceList(): Promise<HTMLElement> {
+    const list = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
+    const devices = (await Bridge.phoneDevices()) ?? [];
+    if (devices.length === 0) {
+      list.append(h("div", { class: "hint", text: "Todavía no hay ningún iPhone emparejado." }));
+      return list;
+    }
+    for (const d of devices) {
+      const seen = new Date(d.lastSeen).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" });
+      list.append(h("div", { class: "row" },
+        h("label", { text: d.device }),
+        h("span", { class: "hint", text: `Visto ${seen}` }),
+        h("span", { class: "spacer" }),
+        h("button", { class: "danger", text: "Quitar", onclick: () => void Bridge.phoneRevoke(d.deviceId) }),
+      ));
+    }
+    return list;
   }
 
   void draw();
-  void onEvent<null>("phone-changed", () => void draw());
+  // Pairing, revoking or the server starting/stopping — and a phone that just
+  // paired should make its own code disappear.
+  void onEvent<null>("phone-changed", () => {
+    pairing = null;
+    void draw();
+  });
   return section;
 }
 

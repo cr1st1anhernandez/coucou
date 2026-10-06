@@ -297,3 +297,10 @@ select option {
   opacity: 0.55;
   cursor: not-allowed;
 }
+
+/* iPhone: the pairing code, big enough to read off the screen. */
+.pair-code {
+  font: 600 26px var(--mono);
+  letter-spacing: 0.12em;
+  user-select: text;
+}

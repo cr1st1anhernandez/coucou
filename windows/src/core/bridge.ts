@@ -139,7 +139,19 @@ export const Bridge = {
   // ── iPhone (phone.rs) ─────────────────────────────────────────────────────
   /** Server state and the Tailscale URL, for the settings window. */
   phoneStatus: () => call<PhoneStatus>("phone_status"),
+  /** A one-time 6-digit code, valid 5 minutes; a new one replaces the last. */
+  phonePairCode: () => call<{ code: string; expiresAt: number }>("phone_pair_code"),
+  phoneDevices: () => call<PhoneDevice[]>("phone_devices"),
+  /** Forgets a paired phone; its open connections close at once. */
+  phoneRevoke: (deviceId: string) => call<void>("phone_revoke", { deviceId }),
 };
+
+export interface PhoneDevice {
+  deviceId: string;
+  device: string;
+  createdAt: number;
+  lastSeen: number;
+}
 
 export interface PhoneStatus {
   running: boolean;

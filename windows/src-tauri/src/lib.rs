@@ -462,6 +462,23 @@ async fn phone_status(app: AppHandle) -> Result<phone::PhoneStatus, String> {
         .map_err(|e| e.to_string())
 }
 
+/// "Emparejar iPhone": a one-time 6-digit code, valid for 5 minutes.
+#[tauri::command]
+fn phone_pair_code(app: AppHandle) -> phone::PairCode {
+    phone::new_pair_code(&app)
+}
+
+#[tauri::command]
+fn phone_devices(app: AppHandle) -> Vec<phone::DeviceInfo> {
+    phone::devices(&app)
+}
+
+/// "Quitar": the device is forgotten and its connections close at once.
+#[tauri::command]
+fn phone_revoke(app: AppHandle, device_id: String) {
+    phone::revoke(&app, &device_id);
+}
+
 // ── Settings window ───────────────────────────────────────────────────────────
 
 /// WebView2 allows exactly one browser environment per app, and its options are
@@ -544,7 +561,7 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Queue::default())
-        .manage(phone::PhoneHub::default())
+        .manage(phone::PhoneHub::load())
         .manage(Chat::default())
         .manage(CodeChats::default())
         .invoke_handler(tauri::generate_handler![
@@ -586,6 +603,9 @@ pub fn run() {
             open_settings_window,
             set_paused,
             phone_status,
+            phone_pair_code,
+            phone_devices,
+            phone_revoke,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
