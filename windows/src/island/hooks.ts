@@ -195,7 +195,7 @@ function isRateLimitText(text: string): boolean {
 }
 
 /** Lowers the approval card and hands the pill back. */
-function dropApprovalCard(island: Island) {
+export function dropApprovalCard(island: Island) {
   State.pendingApproval = null;
   State.isPinned = false;
   island.dropPin();

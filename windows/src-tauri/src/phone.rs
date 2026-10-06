@@ -27,7 +27,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::State;
+use axum::extract::{Path as UrlPath, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -40,6 +40,7 @@ use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::{broadcast, oneshot};
 
+use crate::island::WINDOW_LABEL;
 use crate::log;
 
 pub const PORT: u16 = 47823;
@@ -72,6 +73,154 @@ struct Inner {
     away: bool,
     /// Open WebSockets: which device, and whether its app is on screen.
     conns: HashMap<u64, Conn>,
+    /// Permission requests and questions still waiting, oldest first.
+    approvals: Vec<PhoneApproval>,
+    questions: Vec<PhoneQuestion>,
+}
+
+/// Who settled a request, for `approval-closed` / `question-closed`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ClosedBy {
+    Phone,
+    Island,
+    /// Nobody could take it, or the island handed it over: Claude Code asks.
+    Terminal,
+    /// Nobody answered in time; Claude Code asks.
+    Timeout,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PhoneApproval {
+    request_id: String,
+    session_id: String,
+    session_name: String,
+    tool: String,
+    summary: String,
+    detail: String,
+    created_at: i64,
+    expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PhoneQuestion {
+    request_id: String,
+    session_id: String,
+    session_name: String,
+    questions: Vec<AskedQuestion>,
+    created_at: i64,
+    expires_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AskedQuestion {
+    question: String,
+    header: String,
+    multi_select: bool,
+    options: Vec<QuestionOption>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct QuestionOption {
+    label: String,
+    description: String,
+}
+
+#[derive(Debug)]
+enum Request {
+    Approval(PhoneApproval),
+    Question(PhoneQuestion),
+}
+
+const ASK_TOOL: &str = "AskUserQuestion";
+const MAX_SUMMARY: usize = 300;
+const MAX_DETAIL: usize = 4000;
+/// What the approval says it authorises, most specific field first
+/// (approvalTarget in hooks.ts).
+const SUMMARY_FIELDS: &[&str] =
+    &["command", "file_path", "path", "url", "query", "pattern", "description", "prompt"];
+
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let mut out: String = text.chars().take(max - 1).collect();
+    out.push('…');
+    out
+}
+
+fn folder_name(cwd: &str) -> String {
+    cwd.trim_end_matches(['\\', '/']).rsplit(['\\', '/']).next().unwrap_or_default().to_string()
+}
+
+/// A PermissionRequest hook payload as the phone sees it. None for a question
+/// with nothing answerable in it.
+fn request_from_hook(
+    request_id: &str,
+    payload: &serde_json::Value,
+    session_name: Option<&str>,
+    created_at: i64,
+    expires_at: i64,
+) -> Option<Request> {
+    let str_of = |v: &serde_json::Value, k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or_default().to_string();
+    let session_id = str_of(payload, "session_id");
+    let session_name = session_name
+        .map(str::to_string)
+        .unwrap_or_else(|| folder_name(&str_of(payload, "cwd")));
+    let tool = str_of(payload, "tool_name");
+    let input = payload.get("tool_input").cloned().unwrap_or_else(|| json!({}));
+
+    if tool == ASK_TOOL {
+        let questions: Vec<AskedQuestion> = input
+            .get("questions")
+            .and_then(|q| q.as_array())
+            .into_iter()
+            .flatten()
+            .map(|q| AskedQuestion {
+                question: str_of(q, "question"),
+                header: str_of(q, "header"),
+                multi_select: q.get("multiSelect").and_then(|m| m.as_bool()).unwrap_or(false),
+                options: q
+                    .get("options")
+                    .and_then(|o| o.as_array())
+                    .into_iter()
+                    .flatten()
+                    .map(|o| QuestionOption { label: str_of(o, "label"), description: str_of(o, "description") })
+                    .filter(|o| !o.label.is_empty())
+                    .collect(),
+            })
+            .filter(|q| !q.question.is_empty() && !q.options.is_empty())
+            .collect();
+        if questions.is_empty() {
+            return None;
+        }
+        return Some(Request::Question(PhoneQuestion {
+            request_id: request_id.to_string(),
+            session_id,
+            session_name,
+            questions,
+            created_at,
+            expires_at,
+        }));
+    }
+
+    let summary = SUMMARY_FIELDS
+        .iter()
+        .find_map(|k| input.get(*k).and_then(|v| v.as_str()).map(str::trim).filter(|v| !v.is_empty()))
+        .unwrap_or(&tool);
+    Some(Request::Approval(PhoneApproval {
+        request_id: request_id.to_string(),
+        session_id,
+        session_name,
+        summary: clip(summary, MAX_SUMMARY),
+        detail: clip(&serde_json::to_string_pretty(&input).unwrap_or_default(), MAX_DETAIL),
+        tool,
+        created_at,
+        expires_at,
+    }))
 }
 
 struct Conn {
@@ -150,7 +299,7 @@ impl PhoneHub {
 
 /// `{ t: "snapshot", sessions, approvals, questions }`.
 fn snapshot(inner: &Inner) -> serde_json::Value {
-    json!({ "sessions": inner.sessions, "approvals": [], "questions": [] })
+    json!({ "sessions": inner.sessions, "approvals": inner.approvals, "questions": inner.questions })
 }
 
 /// A pairing code on screen in the settings window.
@@ -341,6 +490,52 @@ pub fn publish(app: &AppHandle, sessions: Vec<PhoneSession>, away: bool) {
     hub.broadcast(json!({ "t": "sessions", "sessions": inner.sessions }));
 }
 
+// ── Permission requests (pipe.rs → phones) ────────────────────────────────────
+
+/// Can a phone answer a request the island won't show? Only if someone will
+/// actually see it there: the app is open on screen. Otherwise the request
+/// goes to the terminal exactly as it did before the phone existed.
+pub fn can_take(app: &AppHandle) -> bool {
+    let hub = app.state::<PhoneHub>();
+    let inner = hub.inner.lock().unwrap();
+    inner.server.is_some() && inner.conns.values().any(|c| c.visible)
+}
+
+/// A PermissionRequest reached the relay: the phones hear of it too.
+pub fn open_request(app: &AppHandle, request_id: &str, payload: &serde_json::Value, created_at: i64, expires_at: i64) {
+    let hub = app.state::<PhoneHub>();
+    let mut inner = hub.inner.lock().unwrap();
+    if inner.server.is_none() {
+        return;
+    }
+    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or_default();
+    let name = inner.sessions.iter().find(|s| s.id == session_id).map(|s| s.name.clone());
+    match request_from_hook(request_id, payload, name.as_deref(), created_at, expires_at) {
+        Some(Request::Approval(a)) => {
+            hub.broadcast(json!({ "t": "approval", "approval": a }));
+            inner.approvals.push(a);
+        }
+        Some(Request::Question(q)) => {
+            hub.broadcast(json!({ "t": "question", "question": q }));
+            inner.questions.push(q);
+        }
+        None => {}
+    }
+}
+
+/// The request is settled, one way or another: the phones drop it.
+pub fn close_request(app: &AppHandle, request_id: &str, by: ClosedBy) {
+    let hub = app.state::<PhoneHub>();
+    let mut inner = hub.inner.lock().unwrap();
+    if let Some(i) = inner.approvals.iter().position(|a| a.request_id == request_id) {
+        inner.approvals.remove(i);
+        hub.broadcast(json!({ "t": "approval-closed", "requestId": request_id, "by": by }));
+    } else if let Some(i) = inner.questions.iter().position(|q| q.request_id == request_id) {
+        inner.questions.remove(i);
+        hub.broadcast(json!({ "t": "question-closed", "requestId": request_id, "by": by }));
+    }
+}
+
 // ── Settings window ───────────────────────────────────────────────────────────
 
 #[derive(Serialize)]
@@ -467,6 +662,8 @@ fn router(app: AppHandle) -> Router {
         .route("/api/unpair", post(unpair))
         .route("/api/snapshot", get(get_snapshot))
         .route("/api/ws", get(ws))
+        .route("/api/approvals/{id}", post(decide_approval))
+        .route("/api/questions/{id}", post(answer_question))
         .fallback(static_file)
         .with_state(app)
 }
@@ -632,6 +829,77 @@ async fn get_snapshot(State(app): State<AppHandle>, headers: HeaderMap) -> Respo
     let hub = app.state::<PhoneHub>();
     let inner = hub.inner.lock().unwrap();
     Json(snapshot(&inner)).into_response()
+}
+
+#[derive(Deserialize)]
+struct DecisionBody {
+    decision: String,
+}
+
+/// Allow / Deny from the phone — always after the user's slide there. The
+/// first decision wins, wherever it came from; any later one is a 404.
+async fn decide_approval(
+    State(app): State<AppHandle>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if authenticate(&app, &headers).is_none() {
+        return status_only(StatusCode::UNAUTHORIZED);
+    }
+    if !write_allowed(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    let decision = match serde_json::from_slice::<DecisionBody>(&body) {
+        Ok(b) if b.decision == "allow" || b.decision == "deny" => b.decision,
+        _ => return status_only(StatusCode::BAD_REQUEST),
+    };
+    let open = {
+        let hub = app.state::<PhoneHub>();
+        let inner = hub.inner.lock().unwrap();
+        inner.approvals.iter().any(|a| a.request_id == id)
+    };
+    if !open || !crate::pipe::answer(&app, &id, &decision, ClosedBy::Phone) {
+        return status_only(StatusCode::NOT_FOUND);
+    }
+    // The island may have the same card up: it closes too.
+    let _ = app.emit_to(WINDOW_LABEL, "phone-decision", json!({ "requestId": id }));
+    status_only(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct AnswersBody {
+    answers: HashMap<String, String>,
+}
+
+async fn answer_question(
+    State(app): State<AppHandle>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if authenticate(&app, &headers).is_none() {
+        return status_only(StatusCode::UNAUTHORIZED);
+    }
+    if !write_allowed(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    let Ok(AnswersBody { answers }) = serde_json::from_slice::<AnswersBody>(&body) else {
+        return status_only(StatusCode::BAD_REQUEST);
+    };
+    let open = {
+        let hub = app.state::<PhoneHub>();
+        let inner = hub.inner.lock().unwrap();
+        inner.questions.iter().any(|q| q.request_id == id)
+    };
+    if answers.is_empty() {
+        return status_only(StatusCode::BAD_REQUEST);
+    }
+    if !open || !crate::pipe::answer_question(&app, &id, &answers, ClosedBy::Phone) {
+        return status_only(StatusCode::NOT_FOUND);
+    }
+    let _ = app.emit_to(WINDOW_LABEL, "phone-decision", json!({ "requestId": id }));
+    status_only(StatusCode::NO_CONTENT)
 }
 
 // ── WebSocket ─────────────────────────────────────────────────────────────────
@@ -914,6 +1182,67 @@ mod tests {
         h.insert(header::COOKIE, "a=1; coucou_phone=tok_en-1; b=2".parse().unwrap());
         assert_eq!(cookie(&h, COOKIE), Some("tok_en-1"));
         assert_eq!(cookie(&h, "c"), None);
+    }
+
+    #[test]
+    fn hook_to_approval() {
+        let payload = json!({
+            "hook_event_name": "PermissionRequest",
+            "session_id": "s1",
+            "cwd": "C:\\Users\\dev\\Projects\\coucou\\",
+            "tool_name": "Bash",
+            "tool_input": { "command": format!("  npm test {}", "x".repeat(400)), "description": "Run tests" },
+        });
+        let Some(Request::Approval(a)) = request_from_hook("7-1", &payload, None, 1_000, 109_000) else {
+            panic!("not an approval")
+        };
+        assert_eq!(a.request_id, "7-1");
+        assert_eq!(a.session_id, "s1");
+        assert_eq!(a.session_name, "coucou", "falls back to the folder name");
+        assert_eq!(a.tool, "Bash");
+        assert!(a.summary.starts_with("npm test x"));
+        assert_eq!(a.summary.chars().count(), MAX_SUMMARY);
+        assert!(a.summary.ends_with('…'));
+        assert!(a.detail.contains("\"description\": \"Run tests\""));
+        assert_eq!((a.created_at, a.expires_at), (1_000, 109_000));
+        let wire = serde_json::to_value(&a).unwrap();
+        assert!(wire.get("sessionName").is_some() && wire.get("expiresAt").is_some());
+
+        // A known session name wins; an unknown tool falls back to its own name.
+        let payload = json!({ "session_id": "s1", "tool_name": "mcp__x__y", "tool_input": { "n": 1 } });
+        let Some(Request::Approval(a)) = request_from_hook("7-2", &payload, Some("mi-sesión"), 0, 0) else {
+            panic!("not an approval")
+        };
+        assert_eq!(a.session_name, "mi-sesión");
+        assert_eq!(a.summary, "mcp__x__y");
+    }
+
+    #[test]
+    fn hook_to_question() {
+        let payload = json!({
+            "session_id": "s2",
+            "cwd": "/home/x/proj",
+            "tool_name": "AskUserQuestion",
+            "tool_input": { "questions": [
+                { "question": "¿Qué base?", "header": "Base", "multiSelect": true,
+                  "options": [{ "label": "Postgres", "description": "SQL" }, { "label": "" }] },
+                { "question": "Sin opciones", "header": "X", "options": [] },
+            ]},
+        });
+        let Some(Request::Question(q)) = request_from_hook("7-3", &payload, None, 5, 6) else {
+            panic!("not a question")
+        };
+        assert_eq!(q.session_name, "proj");
+        assert_eq!(q.questions.len(), 1);
+        assert!(q.questions[0].multi_select);
+        assert_eq!(q.questions[0].options.len(), 1);
+        let wire = serde_json::to_value(&q).unwrap();
+        assert_eq!(wire["questions"][0]["multiSelect"], true);
+        assert_eq!(wire["questions"][0]["options"][0]["label"], "Postgres");
+
+        let empty = json!({ "tool_name": "AskUserQuestion", "tool_input": {} });
+        assert!(request_from_hook("7-4", &empty, None, 0, 0).is_none());
+        assert_eq!(serde_json::to_value(ClosedBy::Timeout).unwrap(), "timeout");
     }
 
     #[test]

@@ -7,7 +7,7 @@ import { State, type Settings } from "./core/state";
 import { Island } from "./island/island";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
-import { syncPhone } from "./island/phone";
+import { registerPhoneHandlers, syncPhone } from "./island/phone";
 
 async function main() {
   const root = document.getElementById("root");
@@ -64,7 +64,7 @@ async function main() {
 
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
-  syncPhone();
+  registerPhoneHandlers(island);
 
   island.launch();
 

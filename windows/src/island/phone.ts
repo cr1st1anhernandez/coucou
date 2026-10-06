@@ -3,10 +3,16 @@
 // whenever it changes, never on a timer.
 //
 // Switched off, nothing here runs: no State listener, no timer.
+//
+// The other way round, Rust tells the island what the phone did: a decision
+// (its card here closes) or a new queue for a session.
 
-import { Bridge } from "../core/bridge";
+import { Bridge, onEvent } from "../core/bridge";
 import { State, type ClaudeSession } from "../core/state";
 import { isAway } from "./away";
+import { dropApprovalCard, dropQuestionCard } from "./hooks";
+import type { Island } from "./island";
+import { setStatusById } from "./sessions";
 
 /** Bursts of changes (a tool call is three events) go out as one snapshot. */
 const PUBLISH_DELAY_MS = 150;
@@ -72,6 +78,34 @@ function schedule() {
   // A trailing timer, not a reset one: a steady stream of notifies (an open,
   // animating island) still publishes every 150 ms instead of never.
   if (timer == null) timer = window.setTimeout(publish, PUBLISH_DELAY_MS);
+}
+
+/**
+ * The phone answered a request. If the island has that card up, it goes away
+ * the same way it does after a click here; the answer itself is already sent.
+ */
+function phoneDecided(island: Island, requestId: string) {
+  const approval = State.pendingApproval;
+  const question = State.pendingQuestion;
+  let sessionId: string | null = null;
+  if (approval?.requestId === requestId) {
+    sessionId = approval.sessionId;
+    dropApprovalCard(island);
+  } else if (question?.requestId === requestId) {
+    sessionId = question.sessionId;
+    dropQuestionCard(island);
+    State.setPillBadge("integration_claude", null);
+    if (State.view === "question") island.setView(State.defaultView());
+  }
+  if (!sessionId) return;
+  void Bridge.log(`phone answered req=${requestId}`);
+  setStatusById(sessionId, "working");
+  State.notify();
+}
+
+export function registerPhoneHandlers(island: Island) {
+  void onEvent<{ requestId: string }>("phone-decision", ({ requestId }) => phoneDecided(island, requestId));
+  syncPhone();
 }
 
 /** Follows the "Acceso desde el iPhone" setting. */

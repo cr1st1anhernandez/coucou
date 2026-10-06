@@ -227,13 +227,13 @@ fn hooks_apply(
 
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
-    pipe::answer(&app, &request_id, &decision);
+    pipe::answer(&app, &request_id, &decision, phone::ClosedBy::Island);
 }
 
 /// The island answered an AskUserQuestion: question text → chosen label(s).
 #[tauri::command]
 fn question_answer(app: AppHandle, request_id: String, answers: HashMap<String, String>) {
-    pipe::answer_question(&app, &request_id, &answers);
+    pipe::answer_question(&app, &request_id, &answers, phone::ClosedBy::Island);
 }
 
 /// The prompts queued on the island for a session, sent one per Stop.

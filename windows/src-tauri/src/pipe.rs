@@ -13,6 +13,11 @@
 //   * whatever happens we drop the connection after the decision timeout, and
 //     the terminal takes over.
 //
+// The iPhone (phone.rs), when it is switched on, hears of every request too. A
+// request the island won't show (paused, busy, not listening) normally goes to
+// the terminal at once; it keeps waiting only if `phone::can_take` says a phone
+// is really there to answer — anything else behaves exactly as before.
+//
 // `Stop` waits too, but never for a human: we answer on the spot with the next
 // prompt queued for that session, `continue "<prompt>"`, or hang up with nothing
 // and the turn ends as usual.
@@ -35,6 +40,7 @@ use tokio::sync::mpsc;
 
 use crate::island::WINDOW_LABEL;
 use crate::log;
+use crate::phone::{self, ClosedBy};
 
 /// Slightly under coucou-hook's own 110 s wait, so we always answer first.
 const DECISION_TIMEOUT: Duration = Duration::from_secs(108);
@@ -49,8 +55,9 @@ const MAX_PAYLOAD: usize = 1 << 20;
 pub enum Reply {
     /// The card is on screen and a human can act on it.
     Ack,
-    /// A human clicked: `allow`, `deny`, or `answers {…}` for a question.
-    Decision(String),
+    /// A human clicked: `allow`, `deny`, or `answers {…}` for a question —
+    /// on the island or on the phone.
+    Decision(String, ClosedBy),
     /// Nobody can act on it — paused, or another request already holds the card.
     Decline,
 }
@@ -213,10 +220,15 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
     }
     payload["request_id"] = json!(id);
     log::line(format!("hook PermissionRequest id={id}"));
+    let created = phone::now_ms();
+    phone::open_request(&app, &id, &payload, created, created + DECISION_TIMEOUT.as_millis() as i64);
     let _ = app.emit_to(WINDOW_LABEL, "hook", payload);
 
-    let decision = wait_for_decision(&id, &mut rx).await;
+    let (decision, by) = wait_for_decision(&app, &id, &mut rx).await;
     app.state::<Pending>().0.lock().unwrap().remove(&id);
+    // Every way out of here passes this line, so the phones never keep a
+    // request nobody can answer any more.
+    phone::close_request(&app, &id, by);
 
     // No decision: say nothing at all. coucou-hook then writes nothing to stdout
     // and Claude Code asks in the terminal, exactly as if Coucou were closed.
@@ -228,37 +240,69 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
 }
 
 /// Two waits: a short one for "the card is up", then the long one for a human.
-async fn wait_for_decision(id: &str, rx: &mut mpsc::Receiver<Reply>) -> Option<String> {
-    match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
-        Ok(Some(Reply::Ack)) => {}
+/// Also says who settled it, for the phones.
+async fn wait_for_decision(
+    app: &AppHandle,
+    id: &str,
+    rx: &mut mpsc::Receiver<Reply>,
+) -> (Option<String>, ClosedBy) {
+    // The phone's deadline counts from the request's arrival, as `expiresAt` does.
+    let deadline = tokio::time::Instant::now() + DECISION_TIMEOUT;
+    let not_shown = match tokio::time::timeout(ACK_TIMEOUT, rx.recv()).await {
+        Ok(Some(Reply::Ack)) => None,
         // A click that beats the ack is still a click.
-        Ok(Some(Reply::Decision(d))) => {
+        Ok(Some(Reply::Decision(d, by))) => {
             log::line(format!("hook id={id} answered {}", verb(&d)));
-            return Some(d);
+            return (Some(d), by);
         }
-        Ok(Some(Reply::Decline)) => {
-            log::line(format!("hook id={id} not shown — terminal takes over"));
-            return None;
+        Ok(Some(Reply::Decline)) => Some("not shown"),
+        Ok(None) => return (None, ClosedBy::Terminal),
+        Err(_) => Some("island never acknowledged"),
+    };
+    if let Some(why) = not_shown {
+        if !phone::can_take(app) {
+            log::line(format!("hook id={id} {why} — terminal takes over"));
+            return (None, ClosedBy::Terminal);
         }
-        Ok(None) => return None,
-        Err(_) => {
-            log::line(format!("hook id={id} island never acknowledged — terminal takes over"));
-            return None;
-        }
+        log::line(format!("hook id={id} {why} — waiting for the phone"));
+        return wait_for_phone(id, rx, deadline).await;
     }
 
     match tokio::time::timeout(DECISION_TIMEOUT, rx.recv()).await {
-        Ok(Some(Reply::Decision(d))) => {
+        Ok(Some(Reply::Decision(d, by))) => {
             log::line(format!("hook id={id} answered {}", verb(&d)));
-            Some(d)
+            (Some(d), by)
         }
         Ok(Some(Reply::Decline)) => {
             log::line(format!("hook id={id} released without a decision"));
-            None
+            (None, ClosedBy::Terminal)
         }
         _ => {
             log::line(format!("hook id={id} timed out — terminal takes over"));
-            None
+            (None, ClosedBy::Timeout)
+        }
+    }
+}
+
+/// The island isn't showing it, but a phone can answer: wait for a decision
+/// until the deadline. A late ack or decline from the island changes nothing.
+async fn wait_for_phone(
+    id: &str,
+    rx: &mut mpsc::Receiver<Reply>,
+    deadline: tokio::time::Instant,
+) -> (Option<String>, ClosedBy) {
+    loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Some(Reply::Decision(d, by))) => {
+                log::line(format!("hook id={id} answered {}", verb(&d)));
+                return (Some(d), by);
+            }
+            Ok(Some(_)) => continue,
+            Ok(None) => return (None, ClosedBy::Terminal),
+            Err(_) => {
+                log::line(format!("hook id={id} timed out — terminal takes over"));
+                return (None, ClosedBy::Timeout);
+            }
         }
     }
 }
@@ -268,17 +312,19 @@ fn verb(decision: &str) -> &str {
     decision.split_whitespace().next().unwrap_or_default()
 }
 
-fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) {
+/// False when the request is already settled (or never existed).
+fn send(app: &AppHandle, request_id: &str, reply: Reply, keep: bool) -> bool {
     let sender = {
         let pending = app.state::<Pending>();
         let mut map = pending.0.lock().unwrap();
         if keep { map.get(request_id).cloned() } else { map.remove(request_id) }
     };
     match sender {
-        Some(tx) => {
-            let _ = tx.try_send(reply);
+        Some(tx) => tx.try_send(reply).is_ok(),
+        None => {
+            log::line(format!("reply for id={request_id} — no pending request"));
+            false
         }
-        None => log::line(format!("reply for id={request_id} — no pending request")),
     }
 }
 
@@ -288,26 +334,28 @@ pub fn acknowledge(app: &AppHandle, request_id: &str) {
 }
 
 /// Nobody can act on this one — paused, or another card already holds the view.
+/// The request stays answerable: a phone may still take it (see wait_for_decision).
 pub fn decline(app: &AppHandle, request_id: &str) {
     log::line(format!("decline id={request_id}"));
-    send(app, request_id, Reply::Decline, false);
+    send(app, request_id, Reply::Decline, true);
 }
 
-/// Called by the island's Allow / Deny buttons. Only ever a bare word: turning
-/// it into Claude Code's JSON is coucou-hook's job.
-pub fn answer(app: &AppHandle, request_id: &str, decision: &str) {
+/// Called by the island's Allow / Deny buttons and the phone's slide. Only ever
+/// a bare word: turning it into Claude Code's JSON is coucou-hook's job.
+/// False if the request was already settled — the first decision wins.
+pub fn answer(app: &AppHandle, request_id: &str, decision: &str, by: ClosedBy) -> bool {
     let word = match decision {
         "allow" | "always" => "allow",
         _ => "deny",
     };
-    log::line(format!("decision id={request_id} {word}"));
-    send(app, request_id, Reply::Decision(word.to_string()), false);
+    log::line(format!("decision id={request_id} {word} ({by:?})"));
+    send(app, request_id, Reply::Decision(word.to_string(), by), false)
 }
 
-/// The island answered an AskUserQuestion: question text → chosen label(s).
-/// serde_json escapes any newline, so it always travels as one line.
-pub fn answer_question(app: &AppHandle, request_id: &str, answers: &HashMap<String, String>) {
-    let Ok(json) = serde_json::to_string(answers) else { return };
-    log::line(format!("decision id={request_id} answers ({} question(s))", answers.len()));
-    send(app, request_id, Reply::Decision(format!("answers {json}")), false);
+/// An AskUserQuestion answered on the island or the phone: question text →
+/// chosen label(s). serde_json escapes any newline, so it always travels as one line.
+pub fn answer_question(app: &AppHandle, request_id: &str, answers: &HashMap<String, String>, by: ClosedBy) -> bool {
+    let Ok(json) = serde_json::to_string(answers) else { return false };
+    log::line(format!("decision id={request_id} answers ({} question(s), {by:?})", answers.len()));
+    send(app, request_id, Reply::Decision(format!("answers {json}"), by), false)
 }
