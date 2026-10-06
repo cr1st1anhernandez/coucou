@@ -9,6 +9,7 @@ mod integrations;
 mod island;
 mod library;
 mod log;
+mod phone;
 mod pipe;
 mod secrets;
 mod settings;
@@ -69,12 +70,13 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     let settings = settings.normalized();
-    let (screen_changed, autostart_changed) = {
+    let (screen_changed, autostart_changed, phone_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
+        let phone_changed = current.phone_enabled != settings.phone_enabled;
         *current = settings.clone();
-        (screen_changed, autostart_changed)
+        (screen_changed, autostart_changed, phone_changed)
     };
     if let Err(err) = settings::save(&settings) {
         eprintln!("[coucou] could not save settings: {err}");
@@ -85,6 +87,9 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         if let Err(err) = result {
             eprintln!("[coucou] autostart: {err}");
         }
+    }
+    if phone_changed {
+        phone::set_enabled(&app, settings.phone_enabled);
     }
     if screen_changed {
         let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
@@ -446,6 +451,17 @@ fn log_line(message: String) {
     log::line(format!("ui  {message}"));
 }
 
+// ── iPhone ────────────────────────────────────────────────────────────────────
+
+/// The settings window's iPhone section: server state and the Tailscale URL.
+#[tauri::command]
+async fn phone_status(app: AppHandle) -> Result<phone::PhoneStatus, String> {
+    // `tailscale status` is a process launch: off the main thread.
+    tauri::async_runtime::spawn_blocking(move || phone::status(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── Settings window ───────────────────────────────────────────────────────────
 
 /// WebView2 allows exactly one browser environment per app, and its options are
@@ -528,6 +544,7 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Queue::default())
+        .manage(phone::PhoneHub::default())
         .manage(Chat::default())
         .manage(CodeChats::default())
         .invoke_handler(tauri::generate_handler![
@@ -568,6 +585,7 @@ pub fn run() {
             refresh_integration,
             open_settings_window,
             set_paused,
+            phone_status,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -588,6 +606,9 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());
+            if loaded.phone_enabled {
+                phone::set_enabled(&handle, true);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

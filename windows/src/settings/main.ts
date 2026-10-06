@@ -336,6 +336,73 @@ function librarySection(): HTMLElement {
   );
 }
 
+// ── iPhone section ────────────────────────────────────────────────────────────
+
+/**
+ * The phone server: on/off, whether it's listening, and how the iPhone reaches
+ * it through Tailscale. Redrawn whenever Rust says something changed.
+ */
+function phoneSection(): HTMLElement {
+  const dot = statusDot(false);
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const section = h("section", {}, h("h2", {}, dot, h("span", { text: "iPhone" })), body);
+
+  async function draw() {
+    const status = settings.phoneEnabled ? await Bridge.phoneStatus() : null;
+    clear(body);
+    dot.style.background = status?.running ? "#22c55e" : "#f4505e";
+    body.append(
+      h("div", {
+        class: "hint",
+        text: "Ve tus sesiones de Claude Code, aprueba permisos, contesta preguntas y encola prompts desde el iPhone, también fuera de casa. Solo funciona dentro de tu red de Tailscale; nada queda expuesto a internet.",
+      }),
+      h("div", { class: "row" },
+        h("label", { text: "Acceso desde el iPhone" }),
+        toggle(settings.phoneEnabled, (v) => {
+          settings.phoneEnabled = v;
+          void save().then(draw);
+        }),
+      ),
+    );
+    if (!status) return;
+
+    if (status.error) {
+      body.append(h("div", { class: "notice err", text: status.error }));
+    } else if (status.running) {
+      body.append(h("div", { class: "row" },
+        h("label", { text: "Servidor" }),
+        h("span", { class: "path", text: `127.0.0.1:${status.port}` }),
+      ));
+    }
+
+    if (status.url) {
+      body.append(h("div", { class: "row" },
+        h("label", { text: "Dirección" }),
+        h("span", { class: "path", text: status.url }),
+        h("button", { text: "Copiar", onclick: () => void Bridge.libraryCopyText(status.url!).catch(() => {}) }),
+      ));
+    } else {
+      body.append(h("div", {
+        class: "notice warn",
+        text: status.tailscale
+          ? `Tailscale está instalado pero no dio su dirección. Inicia sesión en Tailscale y activa MagicDNS y HTTPS en login.tailscale.com/admin/dns. Luego corre: tailscale serve --bg ${status.port}`
+          : `Instala Tailscale en esta PC y en el iPhone con la misma cuenta (tailscale.com/download). Luego activa MagicDNS y HTTPS, y corre: tailscale serve --bg ${status.port}`,
+      }));
+    }
+
+    if (!status.webInstalled) {
+      body.append(h("div", {
+        class: "notice warn",
+        text: `La PWA todavía no está en ${status.webDir}. Despliégala con npm run deploy desde su proyecto.`,
+      }));
+    }
+  }
+
+  void draw();
+  void onEvent<null>("phone-changed", () => void draw());
+  return section;
+}
+
 // ── Integrations section ──────────────────────────────────────────────────────
 
 interface IntegrationDef {
@@ -574,6 +641,7 @@ async function main() {
     claudeSection(status),
     apiSection(hasKey),
     librarySection(),
+    phoneSection(),
     integrationsSection(present),
     generalSection(),
     soundsSection(),

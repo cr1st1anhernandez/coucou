@@ -32,6 +32,8 @@ pub struct Settings {
     pub chat_engine: String,
     /// How the library's buttons hand a prompt to the terminal.
     pub paste_modes: PasteModes,
+    /// "Acceso desde el iPhone": the phone server (phone.rs) runs only while on.
+    pub phone_enabled: bool,
 }
 
 /// The library's three ways to take a prompt to the terminal. At least one is
@@ -97,6 +99,7 @@ impl Default for Settings {
             sound_cues: HashMap::new(),
             chat_engine: "claudeCode".into(),
             paste_modes: PasteModes::default(),
+            phone_enabled: false,
         }
     }
 }

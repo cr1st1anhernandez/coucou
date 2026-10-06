@@ -135,7 +135,23 @@ export const Bridge = {
 
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
+
+  // ── iPhone (phone.rs) ─────────────────────────────────────────────────────
+  /** Server state and the Tailscale URL, for the settings window. */
+  phoneStatus: () => call<PhoneStatus>("phone_status"),
 };
+
+export interface PhoneStatus {
+  running: boolean;
+  /** Why the server couldn't start, e.g. the port is taken. */
+  error: string | null;
+  port: number;
+  /** `https://<pc>.<tailnet>.ts.net`, when Tailscale can tell. */
+  url: string | null;
+  tailscale: boolean;
+  webDir: string;
+  webInstalled: boolean;
+}
 
 export interface IntegrationUpdate {
   id: string;

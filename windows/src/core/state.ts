@@ -208,6 +208,8 @@ export interface Settings {
   /** The chat runs on the user's Claude Code (their account) or on an API key. */
   chatEngine: "claudeCode" | "api";
   pasteModes: PasteModes;
+  /** "Acceso desde el iPhone": the phone server runs only while this is on. */
+  phoneEnabled: boolean;
 }
 
 /** Seconds the open island waits after the mouse leaves before closing. */
@@ -227,6 +229,7 @@ export const DEFAULT_SETTINGS: Settings = {
   soundCues: {},
   chatEngine: "claudeCode",
   pasteModes: { copy: true, warp: true, paste: false },
+  phoneEnabled: false,
 };
 
 type Listener = () => void;
