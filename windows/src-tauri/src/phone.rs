@@ -30,7 +30,7 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path as UrlPath, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use base64::Engine;
@@ -52,6 +52,10 @@ const PAIR_ATTEMPTS: u32 = 5;
 const SEEN_SAVE_MS: i64 = 60_000;
 /// The PWA pings every 20 s; three missed pings and the socket is dead.
 const PING_TIMEOUT: Duration = Duration::from_secs(60);
+/// Prompts a session can have queued (MAX_QUEUE in sessions.ts).
+const MAX_QUEUE: usize = 4;
+/// Longest prompt accepted from the phone.
+const MAX_PROMPT: usize = 8_000;
 
 /// Everything the server knows. Lives in Tauri's state.
 pub struct PhoneHub {
@@ -664,6 +668,7 @@ fn router(app: AppHandle) -> Router {
         .route("/api/ws", get(ws))
         .route("/api/approvals/{id}", post(decide_approval))
         .route("/api/questions/{id}", post(answer_question))
+        .route("/api/sessions/{id}/queue", put(set_queue))
         .fallback(static_file)
         .with_state(app)
 }
@@ -899,6 +904,46 @@ async fn answer_question(
         return status_only(StatusCode::NOT_FOUND);
     }
     let _ = app.emit_to(WINDOW_LABEL, "phone-decision", json!({ "requestId": id }));
+    status_only(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct QueueBody {
+    prompts: Vec<String>,
+}
+
+/// Replaces a session's queue. The island owns the queue (it shows it and
+/// hands it to the relay), so this only asks the island to apply it; the next
+/// snapshot shows the result.
+async fn set_queue(
+    State(app): State<AppHandle>,
+    UrlPath(id): UrlPath<String>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if authenticate(&app, &headers).is_none() {
+        return status_only(StatusCode::UNAUTHORIZED);
+    }
+    if !write_allowed(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    let prompts: Vec<String> = match serde_json::from_slice::<QueueBody>(&body) {
+        Ok(b) => b.prompts.iter().map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+        Err(_) => return status_only(StatusCode::BAD_REQUEST),
+    };
+    if prompts.len() > MAX_QUEUE || prompts.iter().any(|p| p.chars().count() > MAX_PROMPT) {
+        return status_only(StatusCode::BAD_REQUEST);
+    }
+    let known = {
+        let hub = app.state::<PhoneHub>();
+        let inner = hub.inner.lock().unwrap();
+        inner.sessions.iter().any(|s| s.id == id)
+    };
+    if !known {
+        return status_only(StatusCode::NOT_FOUND);
+    }
+    log::line(format!("phone: queue for {id} ({} prompt(s))", prompts.len()));
+    let _ = app.emit_to(WINDOW_LABEL, "phone-queue", json!({ "sessionId": id, "prompts": prompts }));
     status_only(StatusCode::NO_CONTENT)
 }
 

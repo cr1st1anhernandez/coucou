@@ -12,7 +12,7 @@ import { State, type ClaudeSession } from "../core/state";
 import { isAway } from "./away";
 import { dropApprovalCard, dropQuestionCard } from "./hooks";
 import type { Island } from "./island";
-import { setStatusById } from "./sessions";
+import { MAX_QUEUE, setStatusById } from "./sessions";
 
 /** Bursts of changes (a tool call is three events) go out as one snapshot. */
 const PUBLISH_DELAY_MS = 150;
@@ -103,8 +103,19 @@ function phoneDecided(island: Island, requestId: string) {
   State.notify();
 }
 
+/** The phone replaced a session's queue: the island applies it, as if typed here. */
+function phoneQueued(sessionId: string, prompts: string[]) {
+  const s = State.sessions.find((x) => x.id === sessionId);
+  if (!s) return;
+  s.queue = prompts.map((p) => p.trim()).filter(Boolean).slice(0, MAX_QUEUE);
+  void Bridge.queueSet(s.id, s.queue);
+  State.notify();
+}
+
 export function registerPhoneHandlers(island: Island) {
   void onEvent<{ requestId: string }>("phone-decision", ({ requestId }) => phoneDecided(island, requestId));
+  void onEvent<{ sessionId: string; prompts: string[] }>("phone-queue", ({ sessionId, prompts }) =>
+    phoneQueued(sessionId, prompts));
   syncPhone();
 }
 
