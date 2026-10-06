@@ -484,6 +484,9 @@ fn stop(app: &AppHandle) {
         // A graceful shutdown waits for open connections: close the sockets.
         hub.send(Out::Shutdown);
         inner.conns.clear();
+        // The island sends everything again when it's switched back on; old
+        // statuses kept here would look like fresh news then.
+        inner.sessions.clear();
     }
 }
 
