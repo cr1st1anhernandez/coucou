@@ -15,6 +15,7 @@ mod secrets;
 mod settings;
 mod tray;
 mod warp;
+mod webpush;
 mod win_ui;
 mod win_user;
 

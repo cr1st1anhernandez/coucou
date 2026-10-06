@@ -444,7 +444,7 @@ function phoneSection(): HTMLElement {
       const seen = new Date(d.lastSeen).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" });
       list.append(h("div", { class: "row" },
         h("label", { text: d.device }),
-        h("span", { class: "hint", text: `Visto ${seen}` }),
+        h("span", { class: "hint", text: `Visto ${seen}${d.push ? " · con notificaciones" : ""}` }),
         h("span", { class: "spacer" }),
         h("button", { class: "danger", text: "Quitar", onclick: () => void Bridge.phoneRevoke(d.deviceId) }),
       ));

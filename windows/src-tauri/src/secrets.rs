@@ -42,3 +42,25 @@ pub fn clear(key: &str) -> Result<(), String> {
 pub fn present(key: &str) -> bool {
     get(key).is_some()
 }
+
+/// Keys only Rust ever touches; the island can't even ask whether they exist.
+const INTERNAL_KEYS: &[&str] = &[
+    // The phone server's VAPID private key (Web Push).
+    "phone-vapid-key",
+];
+
+fn internal_entry(key: &str) -> Option<Entry> {
+    if !INTERNAL_KEYS.contains(&key) {
+        return None;
+    }
+    Entry::new(SERVICE, key).ok()
+}
+
+pub fn get_internal(key: &str) -> Option<String> {
+    internal_entry(key)?.get_password().ok().filter(|v| !v.is_empty())
+}
+
+pub fn set_internal(key: &str, value: &str) -> Result<(), String> {
+    let entry = internal_entry(key).ok_or_else(|| format!("unknown key {key}"))?;
+    entry.set_password(value).map_err(|e| e.to_string())
+}

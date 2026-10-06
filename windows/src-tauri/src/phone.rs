@@ -15,6 +15,10 @@
 // the phone trades it for a random token kept in an HttpOnly cookie. Only the
 // token's SHA-256 is stored (devices.json), so that file holds no secret.
 //
+// Push notifications (webpush.rs) only go out while the user is away from the
+// PC, and never to a phone that has the app open. They say what is waiting
+// ("Permiso: Bash · coucou"), never the command itself.
+//
 // Sessions live in the island's front end, not here: the island publishes a
 // snapshot (`phone_publish`) whenever one changes, and the server hands it on
 // to every open WebSocket.
@@ -22,7 +26,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
@@ -42,6 +46,8 @@ use tokio::sync::{broadcast, oneshot};
 
 use crate::island::WINDOW_LABEL;
 use crate::log;
+use crate::secrets;
+use crate::webpush::{self, Subscription, Vapid};
 
 pub const PORT: u16 = 47823;
 const COOKIE: &str = "coucou_phone";
@@ -56,6 +62,7 @@ const PING_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_QUEUE: usize = 4;
 /// Longest prompt accepted from the phone.
 const MAX_PROMPT: usize = 8_000;
+const VAPID_KEY: &str = "phone-vapid-key";
 
 /// Everything the server knows. Lives in Tauri's state.
 pub struct PhoneHub {
@@ -80,6 +87,8 @@ struct Inner {
     /// Permission requests and questions still waiting, oldest first.
     approvals: Vec<PhoneApproval>,
     questions: Vec<PhoneQuestion>,
+    /// Loaded from the Credential Manager on first use.
+    vapid: Option<Arc<Vapid>>,
 }
 
 /// Who settled a request, for `approval-closed` / `question-closed`.
@@ -277,6 +286,9 @@ struct Device {
     token_hash: String,
     created_at: i64,
     last_seen: i64,
+    /// Where to send its notifications, once it allowed them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    push: Option<Subscription>,
 }
 
 impl PhoneHub {
@@ -487,43 +499,200 @@ pub fn publish(app: &AppHandle, sessions: Vec<PhoneSession>, away: bool) {
     if !is_running(app) {
         return;
     }
-    let hub = app.state::<PhoneHub>();
-    let mut inner = hub.inner.lock().unwrap();
-    inner.sessions = sessions;
-    inner.away = away;
-    hub.broadcast(json!({ "t": "sessions", "sessions": inner.sessions }));
+    let (news, targets) = {
+        let hub = app.state::<PhoneHub>();
+        let mut inner = hub.inner.lock().unwrap();
+        let news = session_news(&inner.sessions, &sessions);
+        inner.sessions = sessions;
+        inner.away = away;
+        hub.broadcast(json!({ "t": "sessions", "sessions": inner.sessions }));
+        (news, push_targets(&inner))
+    };
+    if news.is_empty() || targets.is_empty() || !user_away(app, away) {
+        return;
+    }
+    for message in news {
+        send_push(app, targets.clone(), message, "normal");
+    }
+}
+
+/// Sessions that just finished, failed or hit their limit, as push messages.
+/// A session seen for the first time doesn't count: after a restart the whole
+/// list arrives at once, and none of it is news.
+fn session_news(before: &[PhoneSession], after: &[PhoneSession]) -> Vec<serde_json::Value> {
+    after
+        .iter()
+        .filter_map(|s| {
+            let old = before.iter().find(|o| o.id == s.id)?;
+            if old.status == s.status {
+                return None;
+            }
+            let (title, body) = match s.status.as_str() {
+                "finished" => (format!("Terminó {}", s.name), s.final_message.as_deref().map(|m| clip(m, 120)).unwrap_or_default()),
+                "error" => (format!("Error en {}", s.name), "La sesión se detuvo con un error.".to_string()),
+                "ratelimit" => (format!("Límite de uso en {}", s.name), "Coucou te avisa cuando se libere.".to_string()),
+                _ => return None,
+            };
+            Some(json!({
+                "title": title,
+                "body": body,
+                "tag": format!("session:{}", s.id),
+                "url": format!("/#/session/{}", s.id),
+            }))
+        })
+        .collect()
 }
 
 // ── Permission requests (pipe.rs → phones) ────────────────────────────────────
 
+/// Whether the island thinks the user is away, or Windows has seen no input
+/// for the absence interval — Rust checks for itself so a quiet island (no
+/// hook event lately) can't hide that the user left.
+fn user_away(app: &AppHandle, island_says: bool) -> bool {
+    if island_says {
+        return true;
+    }
+    let absence = app.state::<crate::Shared>().settings.lock().unwrap().absence_interval;
+    crate::win_ui::idle_seconds() as f64 >= absence
+}
+
 /// Can a phone answer a request the island won't show? Only if someone will
-/// actually see it there: the app is open on screen. Otherwise the request
-/// goes to the terminal exactly as it did before the phone existed.
+/// actually see it there: (a) the app is open on screen, or (b) the user is
+/// away and a phone gets notifications. Otherwise the request goes to the
+/// terminal exactly as it did before the phone existed — no extra wait for
+/// someone sitting at the PC with the island paused.
 pub fn can_take(app: &AppHandle) -> bool {
-    let hub = app.state::<PhoneHub>();
-    let inner = hub.inner.lock().unwrap();
-    inner.server.is_some() && inner.conns.values().any(|c| c.visible)
+    let (running, visible, push, island_away) = {
+        let hub = app.state::<PhoneHub>();
+        let inner = hub.inner.lock().unwrap();
+        (
+            inner.server.is_some(),
+            inner.conns.values().any(|c| c.visible),
+            inner.devices.iter().any(|d| d.push.is_some()),
+            inner.away,
+        )
+    };
+    running && (visible || (push && user_away(app, island_away)))
 }
 
 /// A PermissionRequest reached the relay: the phones hear of it too.
 pub fn open_request(app: &AppHandle, request_id: &str, payload: &serde_json::Value, created_at: i64, expires_at: i64) {
+    let (message, targets, island_away) = {
+        let hub = app.state::<PhoneHub>();
+        let mut inner = hub.inner.lock().unwrap();
+        if inner.server.is_none() {
+            return;
+        }
+        let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or_default();
+        let name = inner.sessions.iter().find(|s| s.id == session_id).map(|s| s.name.clone());
+        // What is waiting, never the command itself: that stays in the app.
+        let message = match request_from_hook(request_id, payload, name.as_deref(), created_at, expires_at) {
+            Some(Request::Approval(a)) => {
+                hub.broadcast(json!({ "t": "approval", "approval": a }));
+                let message = json!({
+                    "title": format!("Permiso: {} · {}", a.tool, a.session_name),
+                    "body": "Ábrelo para aprobar o negar.",
+                    "tag": format!("approval:{request_id}"),
+                    "url": format!("/#/approval/{request_id}"),
+                });
+                inner.approvals.push(a);
+                message
+            }
+            Some(Request::Question(q)) => {
+                hub.broadcast(json!({ "t": "question", "question": q }));
+                let message = json!({
+                    "title": format!("Pregunta · {}", q.session_name),
+                    "body": "Claude espera tu respuesta.",
+                    "tag": format!("question:{request_id}"),
+                    "url": format!("/#/question/{request_id}"),
+                });
+                inner.questions.push(q);
+                message
+            }
+            None => return,
+        };
+        (message, push_targets(&inner), inner.away)
+    };
+    if !targets.is_empty() && user_away(app, island_away) {
+        send_push(app, targets, message, "high");
+    }
+}
+
+// ── Push ──────────────────────────────────────────────────────────────────────
+
+/// Phones that get notifications and don't have the app on screen right now.
+fn push_targets(inner: &Inner) -> Vec<(String, Subscription)> {
+    inner
+        .devices
+        .iter()
+        .filter(|d| !inner.conns.values().any(|c| c.visible && c.device_id == d.device_id))
+        .filter_map(|d| Some((d.device_id.clone(), d.push.clone()?)))
+        .collect()
+}
+
+/// Coucou's VAPID keys: from the Credential Manager, made the first time.
+fn vapid(app: &AppHandle) -> Result<Arc<Vapid>, String> {
     let hub = app.state::<PhoneHub>();
     let mut inner = hub.inner.lock().unwrap();
-    if inner.server.is_none() {
-        return;
+    if let Some(v) = &inner.vapid {
+        return Ok(v.clone());
     }
-    let session_id = payload.get("session_id").and_then(|v| v.as_str()).unwrap_or_default();
-    let name = inner.sessions.iter().find(|s| s.id == session_id).map(|s| s.name.clone());
-    match request_from_hook(request_id, payload, name.as_deref(), created_at, expires_at) {
-        Some(Request::Approval(a)) => {
-            hub.broadcast(json!({ "t": "approval", "approval": a }));
-            inner.approvals.push(a);
+    let key = match secrets::get_internal(VAPID_KEY).and_then(|k| Vapid::from_b64(&k)) {
+        Some(k) => k,
+        None => {
+            let k = Vapid::generate()?;
+            secrets::set_internal(VAPID_KEY, &k.private_b64())?;
+            log::line("phone: VAPID keys created");
+            k
         }
-        Some(Request::Question(q)) => {
-            hub.broadcast(json!({ "t": "question", "question": q }));
-            inner.questions.push(q);
+    };
+    let key = Arc::new(key);
+    inner.vapid = Some(key.clone());
+    Ok(key)
+}
+
+fn http_client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+fn send_push(app: &AppHandle, targets: Vec<(String, Subscription)>, message: serde_json::Value, urgency: &'static str) {
+    let vapid = match vapid(app) {
+        Ok(v) => v,
+        Err(err) => {
+            log::line(format!("phone: no VAPID key: {err}"));
+            return;
         }
-        None => {}
+    };
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let body = message.to_string();
+        let now_s = (now_ms() / 1000) as u64;
+        for (device_id, sub) in targets {
+            match webpush::send(http_client(), &vapid, &sub, body.as_bytes(), urgency, now_s).await {
+                webpush::Sent::Delivered => {}
+                webpush::Sent::Gone => {
+                    log::line(format!("phone: push subscription of {device_id} is gone"));
+                    forget_subscription(&app, &device_id, &sub.endpoint);
+                }
+                webpush::Sent::Failed(err) => log::line(format!("phone: push to {device_id} failed: {err}")),
+            }
+        }
+    });
+}
+
+fn forget_subscription(app: &AppHandle, device_id: &str, endpoint: &str) {
+    let hub = app.state::<PhoneHub>();
+    let mut inner = hub.inner.lock().unwrap();
+    let Some(d) = inner.devices.iter_mut().find(|d| d.device_id == device_id) else { return };
+    if d.push.as_ref().is_some_and(|p| p.endpoint == endpoint) {
+        d.push = None;
+        save_devices(&inner.devices);
     }
 }
 
@@ -621,6 +790,8 @@ pub struct DeviceInfo {
     device: String,
     created_at: i64,
     last_seen: i64,
+    /// It allowed notifications.
+    push: bool,
 }
 
 pub fn devices(app: &AppHandle) -> Vec<DeviceInfo> {
@@ -634,6 +805,7 @@ pub fn devices(app: &AppHandle) -> Vec<DeviceInfo> {
             device: d.device.clone(),
             created_at: d.created_at,
             last_seen: d.last_seen,
+            push: d.push.is_some(),
         })
         .collect()
 }
@@ -669,6 +841,8 @@ fn router(app: AppHandle) -> Router {
         .route("/api/approvals/{id}", post(decide_approval))
         .route("/api/questions/{id}", post(answer_question))
         .route("/api/sessions/{id}/queue", put(set_queue))
+        .route("/api/push/key", get(push_key))
+        .route("/api/push/subscribe", post(push_subscribe).delete(push_unsubscribe))
         .fallback(static_file)
         .with_state(app)
 }
@@ -789,6 +963,7 @@ async fn pair(State(app): State<AppHandle>, headers: HeaderMap, body: Bytes) -> 
             token_hash: hash_token(&token),
             created_at: now,
             last_seen: now,
+            push: None,
         };
         inner.devices.push(device.clone());
         save_devices(&inner.devices);
@@ -944,6 +1119,72 @@ async fn set_queue(
     }
     log::line(format!("phone: queue for {id} ({} prompt(s))", prompts.len()));
     let _ = app.emit_to(WINDOW_LABEL, "phone-queue", json!({ "sessionId": id, "prompts": prompts }));
+    status_only(StatusCode::NO_CONTENT)
+}
+
+async fn push_key(State(app): State<AppHandle>, headers: HeaderMap) -> Response {
+    if authenticate(&app, &headers).is_none() {
+        return status_only(StatusCode::UNAUTHORIZED);
+    }
+    match vapid(&app) {
+        Ok(v) => Json(json!({ "publicKey": v.public_b64() })).into_response(),
+        Err(err) => {
+            log::line(format!("phone: no VAPID key: {err}"));
+            status_only(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+/// A subscription worth keeping: an https endpoint and keys of the right size.
+fn valid_subscription(sub: &Subscription) -> bool {
+    let len = |s: &str| B64.decode(s.trim_end_matches('=')).map(|b| b.len()).unwrap_or(0);
+    sub.endpoint.starts_with("https://")
+        && reqwest::Url::parse(&sub.endpoint).is_ok()
+        && len(&sub.keys.p256dh) == 65
+        && len(&sub.keys.auth) == 16
+}
+
+async fn push_subscribe(State(app): State<AppHandle>, headers: HeaderMap, body: Bytes) -> Response {
+    let Some(caller) = authenticate(&app, &headers) else {
+        return status_only(StatusCode::UNAUTHORIZED);
+    };
+    if !write_allowed(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    let sub = match serde_json::from_slice::<Subscription>(&body) {
+        Ok(s) if valid_subscription(&s) => s,
+        _ => return status_only(StatusCode::BAD_REQUEST),
+    };
+    {
+        let hub = app.state::<PhoneHub>();
+        let mut inner = hub.inner.lock().unwrap();
+        if let Some(d) = inner.devices.iter_mut().find(|d| d.device_id == caller.device_id) {
+            d.push = Some(sub);
+            save_devices(&inner.devices);
+        }
+    }
+    log::line(format!("phone: {} subscribed to notifications", caller.device_id));
+    let _ = app.emit("phone-changed", ());
+    status_only(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct EndpointBody {
+    endpoint: String,
+}
+
+async fn push_unsubscribe(State(app): State<AppHandle>, headers: HeaderMap, body: Bytes) -> Response {
+    let Some(caller) = authenticate(&app, &headers) else {
+        return status_only(StatusCode::UNAUTHORIZED);
+    };
+    if !write_allowed(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    let Ok(EndpointBody { endpoint }) = serde_json::from_slice::<EndpointBody>(&body) else {
+        return status_only(StatusCode::BAD_REQUEST);
+    };
+    forget_subscription(&app, &caller.device_id, &endpoint);
+    let _ = app.emit("phone-changed", ());
     status_only(StatusCode::NO_CONTENT)
 }
 
@@ -1288,6 +1529,34 @@ mod tests {
         let empty = json!({ "tool_name": "AskUserQuestion", "tool_input": {} });
         assert!(request_from_hook("7-4", &empty, None, 0, 0).is_none());
         assert_eq!(serde_json::to_value(ClosedBy::Timeout).unwrap(), "timeout");
+    }
+
+    fn session(id: &str, status: &str) -> PhoneSession {
+        serde_json::from_value(json!({
+            "id": id, "name": format!("n-{id}"), "cwd": "", "status": status, "steps": [], "stepIndex": 0,
+            "lastEventAt": 0, "waitingSince": null, "finishedAt": null, "finalMessage": "Listo, quedó.",
+            "rateResetAt": null, "todo": null, "subagents": 0,
+            "summary": { "files": [], "added": 0, "removed": 0, "tests": "none" }, "queue": [],
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn session_news_only_on_transitions() {
+        let before = vec![session("a", "working"), session("b", "finished"), session("c", "thinking")];
+        let after = vec![
+            session("a", "finished"),
+            session("b", "finished"),
+            session("c", "ratelimit"),
+            session("d", "error"),
+        ];
+        let news = session_news(&before, &after);
+        assert_eq!(news.len(), 2, "{news:?}");
+        assert_eq!(news[0]["title"], "Terminó n-a");
+        assert_eq!(news[0]["body"], "Listo, quedó.");
+        assert_eq!(news[0]["tag"], "session:a");
+        assert_eq!(news[0]["url"], "/#/session/a");
+        assert_eq!(news[1]["title"], "Límite de uso en n-c");
     }
 
     #[test]

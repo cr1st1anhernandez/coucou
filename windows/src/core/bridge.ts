@@ -155,6 +155,8 @@ export interface PhoneDevice {
   device: string;
   createdAt: number;
   lastSeen: number;
+  /** It allowed notifications. */
+  push: boolean;
 }
 
 export interface PhoneStatus {
