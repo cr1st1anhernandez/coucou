@@ -14,12 +14,19 @@
 // Pairing: the settings window shows a 6-digit code, valid 5 minutes and once;
 // the phone trades it for a random token kept in an HttpOnly cookie. Only the
 // token's SHA-256 is stored (devices.json), so that file holds no secret.
+//
+// Sessions live in the island's front end, not here: the island publishes a
+// snapshot (`phone_publish`) whenever one changes, and the server hands it on
+// to every open WebSocket.
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use axum::body::{Body, Bytes};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
@@ -31,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tauri::{AppHandle, Emitter, Manager};
-use tokio::sync::oneshot;
+use tokio::sync::{broadcast, oneshot};
 
 use crate::log;
 
@@ -42,10 +49,14 @@ const PAIR_TTL: Duration = Duration::from_secs(5 * 60);
 const PAIR_ATTEMPTS: u32 = 5;
 /// `lastSeen` reaches the disk at most this often per device.
 const SEEN_SAVE_MS: i64 = 60_000;
+/// The PWA pings every 20 s; three missed pings and the socket is dead.
+const PING_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Everything the server knows. Lives in Tauri's state.
 pub struct PhoneHub {
     inner: Mutex<Inner>,
+    /// Fan-out to every open WebSocket.
+    tx: broadcast::Sender<Arc<Out>>,
 }
 
 #[derive(Default)]
@@ -56,7 +67,51 @@ struct Inner {
     error: Option<String>,
     devices: Vec<Device>,
     pairing: Option<Pairing>,
+    /// The island's last snapshot, and whether it thinks the user is away.
+    sessions: Vec<PhoneSession>,
+    away: bool,
+    /// Open WebSockets: which device, and whether its app is on screen.
+    conns: HashMap<u64, Conn>,
 }
+
+struct Conn {
+    device_id: String,
+    visible: bool,
+}
+
+/// What goes out to the WebSockets.
+enum Out {
+    /// A message for every phone.
+    Json(String),
+    /// This device was removed: its sockets close.
+    Revoke(String),
+    /// The server is stopping.
+    Shutdown,
+}
+
+/// One Claude Code session, as the island publishes it (PhoneSession in the
+/// API contract). Rust only reads `id`, `name` and `status`; the rest travels on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhoneSession {
+    id: String,
+    name: String,
+    cwd: String,
+    status: String,
+    steps: Vec<String>,
+    step_index: i64,
+    last_event_at: i64,
+    waiting_since: Option<i64>,
+    finished_at: Option<i64>,
+    final_message: Option<String>,
+    rate_reset_at: Option<i64>,
+    todo: Option<serde_json::Value>,
+    subagents: i64,
+    summary: serde_json::Value,
+    queue: Vec<String>,
+}
+
+static CONN_IDS: AtomicU64 = AtomicU64::new(1);
 
 /// A paired phone, as stored in devices.json.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,8 +132,25 @@ impl PhoneHub {
             .ok()
             .and_then(|b| serde_json::from_slice(&b).ok())
             .unwrap_or_default();
-        Self { inner: Mutex::new(Inner { devices, ..Default::default() }) }
+        Self {
+            inner: Mutex::new(Inner { devices, ..Default::default() }),
+            tx: broadcast::channel(64).0,
+        }
     }
+
+    fn send(&self, out: Out) {
+        // No socket open is not an error.
+        let _ = self.tx.send(Arc::new(out));
+    }
+
+    fn broadcast(&self, message: serde_json::Value) {
+        self.send(Out::Json(message.to_string()));
+    }
+}
+
+/// `{ t: "snapshot", sessions, approvals, questions }`.
+fn snapshot(inner: &Inner) -> serde_json::Value {
+    json!({ "sessions": inner.sessions, "approvals": [], "questions": [] })
 }
 
 /// A pairing code on screen in the settings window.
@@ -244,7 +316,29 @@ fn stop(app: &AppHandle) {
     inner.error = None;
     if let Some(stop) = inner.server.take() {
         let _ = stop.send(());
+        // A graceful shutdown waits for open connections: close the sockets.
+        hub.send(Out::Shutdown);
+        inner.conns.clear();
     }
+}
+
+fn is_running(app: &AppHandle) -> bool {
+    app.state::<PhoneHub>().inner.lock().unwrap().server.is_some()
+}
+
+// ── Sessions (island → phones) ────────────────────────────────────────────────
+
+/// The island's sessions changed. Stored for `/api/snapshot`, sent to every
+/// open socket.
+pub fn publish(app: &AppHandle, sessions: Vec<PhoneSession>, away: bool) {
+    if !is_running(app) {
+        return;
+    }
+    let hub = app.state::<PhoneHub>();
+    let mut inner = hub.inner.lock().unwrap();
+    inner.sessions = sessions;
+    inner.away = away;
+    hub.broadcast(json!({ "t": "sessions", "sessions": inner.sessions }));
 }
 
 // ── Settings window ───────────────────────────────────────────────────────────
@@ -356,6 +450,8 @@ pub fn revoke(app: &AppHandle, device_id: &str) {
             return;
         }
         save_devices(&inner.devices);
+        inner.conns.retain(|_, c| c.device_id != device_id);
+        hub.send(Out::Revoke(device_id.to_string()));
     }
     log::line(format!("phone: device {device_id} removed"));
     let _ = app.emit("phone-changed", ());
@@ -369,6 +465,8 @@ fn router(app: AppHandle) -> Router {
         .route("/api/pair", post(pair))
         .route("/api/me", get(me))
         .route("/api/unpair", post(unpair))
+        .route("/api/snapshot", get(get_snapshot))
+        .route("/api/ws", get(ws))
         .fallback(static_file)
         .with_state(app)
 }
@@ -525,6 +623,101 @@ async fn unpair(State(app): State<AppHandle>, headers: HeaderMap) -> Response {
         res.headers_mut().insert(header::SET_COOKIE, v);
     }
     res
+}
+
+async fn get_snapshot(State(app): State<AppHandle>, headers: HeaderMap) -> Response {
+    if authenticate(&app, &headers).is_none() {
+        return status_only(StatusCode::UNAUTHORIZED);
+    }
+    let hub = app.state::<PhoneHub>();
+    let inner = hub.inner.lock().unwrap();
+    Json(snapshot(&inner)).into_response()
+}
+
+// ── WebSocket ─────────────────────────────────────────────────────────────────
+
+async fn ws(State(app): State<AppHandle>, headers: HeaderMap, upgrade: WebSocketUpgrade) -> Response {
+    let Some(caller) = authenticate(&app, &headers) else {
+        return status_only(StatusCode::UNAUTHORIZED);
+    };
+    // Browsers always send Origin on a WebSocket; another site's page can't
+    // pretend to be ours.
+    if !same_origin(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    upgrade.on_upgrade(move |socket| socket_loop(app, caller.device_id, socket))
+}
+
+#[derive(Deserialize)]
+struct FromPhone {
+    t: String,
+    visible: Option<bool>,
+}
+
+async fn socket_loop(app: AppHandle, device_id: String, mut socket: WebSocket) {
+    let conn_id = CONN_IDS.fetch_add(1, Ordering::Relaxed);
+    let (mut rx, first) = {
+        let hub = app.state::<PhoneHub>();
+        let mut inner = hub.inner.lock().unwrap();
+        // Visible until it says otherwise: it just opened, so it's on screen.
+        inner.conns.insert(conn_id, Conn { device_id: device_id.clone(), visible: true });
+        let mut first = snapshot(&inner);
+        first["t"] = json!("snapshot");
+        (hub.tx.subscribe(), first.to_string())
+    };
+    log::line(format!("phone: socket {conn_id} open ({device_id})"));
+
+    let mut alive = socket.send(Message::Text(first.into())).await.is_ok();
+    let mut deadline = tokio::time::Instant::now() + PING_TIMEOUT;
+    while alive {
+        tokio::select! {
+            incoming = socket.recv() => match incoming {
+                Some(Ok(Message::Text(text))) => {
+                    deadline = tokio::time::Instant::now() + PING_TIMEOUT;
+                    let Ok(msg) = serde_json::from_str::<FromPhone>(text.as_str()) else { continue };
+                    match msg.t.as_str() {
+                        "ping" => alive = socket.send(Message::Text(r#"{"t":"pong"}"#.into())).await.is_ok(),
+                        "visible" => set_visible(&app, conn_id, msg.visible.unwrap_or(false)),
+                        _ => {}
+                    }
+                }
+                Some(Ok(Message::Close(_))) | Some(Err(_)) | None => alive = false,
+                Some(Ok(_)) => {}
+            },
+            out = rx.recv() => match out {
+                Ok(out) => match &*out {
+                    Out::Json(text) => alive = socket.send(Message::Text(text.clone().into())).await.is_ok(),
+                    Out::Revoke(id) if *id == device_id => alive = false,
+                    Out::Revoke(_) => {}
+                    Out::Shutdown => alive = false,
+                },
+                // Fell behind: start over from the full picture.
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    let fresh = {
+                        let hub = app.state::<PhoneHub>();
+                        let inner = hub.inner.lock().unwrap();
+                        let mut s = snapshot(&inner);
+                        s["t"] = json!("snapshot");
+                        s.to_string()
+                    };
+                    alive = socket.send(Message::Text(fresh.into())).await.is_ok();
+                }
+                Err(broadcast::error::RecvError::Closed) => alive = false,
+            },
+            _ = tokio::time::sleep_until(deadline) => alive = false,
+        }
+    }
+    let _ = socket.send(Message::Close(None)).await;
+    app.state::<PhoneHub>().inner.lock().unwrap().conns.remove(&conn_id);
+    log::line(format!("phone: socket {conn_id} closed"));
+}
+
+fn set_visible(app: &AppHandle, conn_id: u64, visible: bool) {
+    let hub = app.state::<PhoneHub>();
+    let mut inner = hub.inner.lock().unwrap();
+    if let Some(c) = inner.conns.get_mut(&conn_id) {
+        c.visible = visible;
+    }
 }
 
 // ── Static files ──────────────────────────────────────────────────────────────

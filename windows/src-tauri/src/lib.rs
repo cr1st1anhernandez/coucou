@@ -462,6 +462,13 @@ async fn phone_status(app: AppHandle) -> Result<phone::PhoneStatus, String> {
         .map_err(|e| e.to_string())
 }
 
+/// The island's sessions changed (debounced, and only while the phone server
+/// is on): the phones get the new list.
+#[tauri::command]
+fn phone_publish(app: AppHandle, sessions: Vec<phone::PhoneSession>, away: bool) {
+    phone::publish(&app, sessions, away);
+}
+
 /// "Emparejar iPhone": a one-time 6-digit code, valid for 5 minutes.
 #[tauri::command]
 fn phone_pair_code(app: AppHandle) -> phone::PairCode {
@@ -603,6 +610,7 @@ pub fn run() {
             open_settings_window,
             set_paused,
             phone_status,
+            phone_publish,
             phone_pair_code,
             phone_devices,
             phone_revoke,

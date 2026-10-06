@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Settings } from "./state";
+import type { PhoneSession } from "../island/phone";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -139,6 +140,9 @@ export const Bridge = {
   // ── iPhone (phone.rs) ─────────────────────────────────────────────────────
   /** Server state and the Tailscale URL, for the settings window. */
   phoneStatus: () => call<PhoneStatus>("phone_status"),
+  /** The island's sessions, for the phones. Only sent when something changed. */
+  phonePublish: (sessions: PhoneSession[], away: boolean) =>
+    call<void>("phone_publish", { sessions, away }),
   /** A one-time 6-digit code, valid 5 minutes; a new one replaces the last. */
   phonePairCode: () => call<{ code: string; expiresAt: number }>("phone_pair_code"),
   phoneDevices: () => call<PhoneDevice[]>("phone_devices"),

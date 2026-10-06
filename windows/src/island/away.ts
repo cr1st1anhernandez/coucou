@@ -25,6 +25,11 @@ let checking = false;
 let timer: number | null = null;
 let focusOn = false;
 
+/** True once the user has been idle past the absence interval, until they're back. */
+export function isAway(): boolean {
+  return away;
+}
+
 /** Called on every hook event. */
 export function noteActivity(island: Island) {
   syncFocus(island);
