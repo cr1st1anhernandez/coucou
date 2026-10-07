@@ -16,7 +16,8 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
 };
 use windows::Win32::System::Console::{
-    AttachConsole, FreeConsole, WriteConsoleInputW, INPUT_RECORD, INPUT_RECORD_0, KEY_EVENT,
+    AttachConsole, FreeConsole, GetConsoleMode, GetConsoleTitleW, WriteConsoleInputW, CONSOLE_MODE,
+    ENABLE_VIRTUAL_TERMINAL_INPUT, INPUT_RECORD, INPUT_RECORD_0, KEY_EVENT,
     KEY_EVENT_RECORD, KEY_EVENT_RECORD_0,
 };
 use windows::Win32::System::Diagnostics::ToolHelp::{
@@ -27,7 +28,6 @@ use windows::Win32::System::Threading::{
     GetCurrentProcess, GetProcessTimes, OpenProcess, OpenProcessToken,
     PROCESS_QUERY_LIMITED_INFORMATION,
 };
-use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC, VK_RETURN};
 
 /// The SID of the account this process runs as, as `S-1-5-21-…`.
 pub fn current_user_sid() -> Option<String> {
@@ -173,7 +173,13 @@ fn same_process(pid: u32, started: u64) -> bool {
 /// A pid that no longer belongs to the same process (Claude Code exited and
 /// Windows gave the number to, say, a shell) is refused: typing a prompt there
 /// could run it as a command.
-pub fn inject(pid: u32, started: u64, text: &str) -> Result<(), String> {
+///
+/// `wait_ready` is for a shell in a Warp tab that just opened: Warp types its
+/// own bootstrap line into the shell once it starts, and anything typed before
+/// that runs first and swallows it. Once bootstrapped, Warp's prompt hook sets
+/// the console title to the current folder; until then it is the shell's own
+/// path. So we wait, up to `wait_ready`, for the title to stop ending in `.exe`.
+pub fn inject(pid: u32, started: u64, text: &str, wait_ready: Option<std::time::Duration>) -> Result<(), String> {
     if !same_process(pid, started) {
         return Err(format!("process {pid} is no longer that Claude Code session"));
     }
@@ -181,15 +187,18 @@ pub fn inject(pid: u32, started: u64, text: &str) -> Result<(), String> {
     let text = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
     let typed: Vec<INPUT_RECORD> = text
         .encode_utf16()
-        .flat_map(|unit| [key(true, 0, 0, unit), key(false, 0, 0, unit)])
+        .flat_map(|unit| [key(true, unit), key(false, unit)])
         .collect();
     unsafe {
-        let scan = MapVirtualKeyW(VK_RETURN.0 as u32, MAPVK_VK_TO_VSC) as u16;
-        let enter = [key(true, VK_RETURN.0, scan, 13), key(false, VK_RETURN.0, scan, 13)];
-
         // Coucou starts us without a console; this is only in case it didn't.
         let _ = FreeConsole();
         AttachConsole(pid).map_err(|e| format!("AttachConsole: {e}"))?;
+        if let Some(limit) = wait_ready {
+            if !wait_for_title(limit) {
+                let _ = FreeConsole();
+                return Err("the shell never finished starting".into());
+            }
+        }
         let result = CreateFileW(
             w!("CONIN$"),
             (GENERIC_READ | GENERIC_WRITE).0,
@@ -201,6 +210,7 @@ pub fn inject(pid: u32, started: u64, text: &str) -> Result<(), String> {
         )
         .map_err(|e| format!("CONIN$: {e}"))
         .and_then(|input| {
+            let enter = enter_for(input);
             let sent = write_input(input, &typed).and_then(|()| {
                 // A beat before Enter, so the text doesn't arrive as one paste
                 // that swallows the Enter with it.
@@ -215,8 +225,45 @@ pub fn inject(pid: u32, started: u64, text: &str) -> Result<(), String> {
     }
 }
 
-/// One key event carrying a UTF-16 unit (or a bare virtual key, for Enter).
-fn key(down: bool, vk: u16, scan: u16, unit: u16) -> INPUT_RECORD {
+/// Polls the attached console's title until it is no longer a program path.
+unsafe fn wait_for_title(limit: std::time::Duration) -> bool {
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        let mut buf = [0u16; 1024];
+        let len = GetConsoleTitleW(&mut buf) as usize;
+        let title = String::from_utf16_lossy(&buf[..len.min(buf.len())]);
+        if !title.is_empty() && !title.to_ascii_lowercase().ends_with(".exe") {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+/// Enter, the way this console takes it.
+///
+/// A console in VT input mode (Claude Code itself) gets the bare character CR:
+/// in a Warp tab Warp has set up, a VK_RETURN event reaches Claude Code as a
+/// sequence it reads as "new line", not "send". A console without it (a
+/// shell's own line editor) wants the real VK_RETURN key: PowerShell ignores a
+/// bare CR there.
+unsafe fn enter_for(input: HANDLE) -> [INPUT_RECORD; 2] {
+    const VK_RETURN: u16 = 0x0D;
+    const SCAN_RETURN: u16 = 0x1C;
+    let mut mode = CONSOLE_MODE(0);
+    let vt = GetConsoleMode(input, &mut mode).is_ok() && mode.contains(ENABLE_VIRTUAL_TERMINAL_INPUT);
+    let (vk, scan) = if vt { (0, 0) } else { (VK_RETURN, SCAN_RETURN) };
+    [key_event(true, vk, scan, 13), key_event(false, vk, scan, 13)]
+}
+
+/// One key event carrying a UTF-16 unit, with no virtual key behind it.
+fn key(down: bool, unit: u16) -> INPUT_RECORD {
+    key_event(down, 0, 0, unit)
+}
+
+fn key_event(down: bool, vk: u16, scan: u16, unit: u16) -> INPUT_RECORD {
     INPUT_RECORD {
         EventType: KEY_EVENT as u16,
         Event: INPUT_RECORD_0 {

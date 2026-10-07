@@ -19,10 +19,11 @@
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
 //!
-//! `coucou-hook inject --pid <pid> --started <time>` is Coucou's, not Claude
-//! Code's: it types the prompt on stdin into that session's terminal and presses
-//! Enter. Coucou uses it to hand a prompt queued on the iPhone to a session that
-//! has finished its turn and would otherwise never get another Stop.
+//! `coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>]` is
+//! Coucou's, not Claude Code's: it types the text on stdin into that process's
+//! console and presses Enter. Coucou uses it to hand a prompt queued on the
+//! iPhone to a session that has finished its turn and would otherwise never get
+//! another Stop, and to start Claude Code in a Warp tab the iPhone opened.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -119,8 +120,9 @@ fn main() {
     std::process::exit(0);
 }
 
-/// `inject --pid <pid> --started <time>`, prompt on stdin. Exit code 0 when the
-/// prompt was typed, 1 otherwise, with the reason on stderr for Coucou's log.
+/// `inject --pid <pid> --started <time> [--wait-ready <ms>]`, text on stdin.
+/// Exit code 0 when the text was typed, 1 otherwise, with the reason on stderr
+/// for Coucou's log.
 fn inject() -> i32 {
     let args: Vec<String> = std::env::args().collect();
     let value = |flag: &str| {
@@ -130,7 +132,7 @@ fn inject() -> i32 {
             .and_then(|v| v.parse::<u64>().ok())
     };
     let (Some(pid), Some(started)) = (value("--pid"), value("--started")) else {
-        eprintln!("usage: coucou-hook inject --pid <pid> --started <time>");
+        eprintln!("usage: coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>]");
         return 1;
     };
     let mut prompt = String::new();
@@ -138,7 +140,8 @@ fn inject() -> i32 {
         eprintln!("no prompt on stdin");
         return 1;
     }
-    match win::inject(pid as u32, started, prompt.trim()) {
+    let wait_ready = value("--wait-ready").map(Duration::from_millis);
+    match win::inject(pid as u32, started, prompt.trim(), wait_ready) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err}");
