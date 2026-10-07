@@ -191,7 +191,7 @@ fn process_table() -> HashMap<u32, (u32, String)> {
 }
 
 /// When a process started (FILETIME), the identity `coucou-hook inject` checks.
-fn process_started(pid: u32) -> Option<u64> {
+pub(crate) fn process_started(pid: u32) -> Option<u64> {
     use windows::Win32::Foundation::{CloseHandle, FILETIME};
     use windows::Win32::System::Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     unsafe {
@@ -445,7 +445,7 @@ async fn run(
             // Typed only once Warp has bootstrapped the shell: Warp types its
             // own setup line into it first, and anything before that would run
             // first and swallow it (claude.exe got it as its first prompt).
-            tauri::async_runtime::spawn_blocking(move || crate::pipe::run_inject(pid, started, &command, Some(SHELL_READY)))
+            tauri::async_runtime::spawn_blocking(move || crate::pipe::run_inject(pid, started, &command, Some(SHELL_READY), false))
                 .await
                 .map_err(|_| "error")?
                 .map_err(|err| {
@@ -482,7 +482,7 @@ async fn run(
         let (session_id, prompt) = (session_id.clone(), prompt.to_string());
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(PROMPT_DELAY).await;
-            let typed = tauri::async_runtime::spawn_blocking(move || crate::pipe::run_inject(pid, started, &prompt, None))
+            let typed = tauri::async_runtime::spawn_blocking(move || crate::pipe::run_inject(pid, started, &prompt, None, true))
                 .await
                 .unwrap_or_else(|e| Err(e.to_string()));
             match typed {

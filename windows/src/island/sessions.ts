@@ -9,7 +9,7 @@
 // set when it starts waiting and cleared the moment it moves on, so a hidden
 // island still costs nothing.
 
-import { Bridge } from "../core/bridge";
+import { Bridge, type RestoredSession } from "../core/bridge";
 import type { BotStateName } from "../core/layout";
 import { State, type ClaudeSession, type SessionStatus, type SessionSummary } from "../core/state";
 
@@ -124,6 +124,24 @@ export function touchSession(
   State.sessions.sort((a, b) => b.lastEventAt - a.lastEventAt);
   if (!State.currentSession) State.currentSessionId = s.id;
   return s;
+}
+
+/** Every SessionStatus, to check one read back from disk. */
+const STATUSES = ["idle", "thinking", "working", "approval", "question", "finished", "error", "ratelimit"] as const;
+
+/**
+ * Sessions still running from before Coucou restarted (remember.rs): back on
+ * the island as they were left, quietly — no sound, no card, no nag.
+ */
+export function restoreSessions(list: RestoredSession[]) {
+  for (const r of list) {
+    if (State.sessions.some((x) => x.id === r.id)) continue;
+    const s = touchSession(r.id, r.cwd, r.root, r.focusUrl);
+    s.status = (STATUSES as readonly string[]).includes(r.status) ? (r.status as SessionStatus) : "idle";
+    s.lastEventAt = r.lastEventAt;
+    s.queue = r.queue.slice(0, MAX_QUEUE);
+  }
+  State.sessions.sort((a, b) => b.lastEventAt - a.lastEventAt);
 }
 
 export function endSession(id: string) {

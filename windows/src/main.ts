@@ -9,6 +9,7 @@ import { registerDelivery } from "./island/deliver";
 import { registerHookHandlers } from "./island/hooks";
 import { registerIntegrationHandlers, refreshConfigured } from "./island/integrations";
 import { registerPhoneHandlers, syncPhone } from "./island/phone";
+import { restoreSessions } from "./island/sessions";
 
 async function main() {
   const root = document.getElementById("root");
@@ -66,6 +67,12 @@ async function main() {
   registerHookHandlers(island);
   registerIntegrationHandlers(island);
   registerPhoneHandlers(island);
+  // Before delivery starts looking: a restored idle session may have a queue.
+  const restored = await Bridge.sessionsRestore();
+  if (restored?.length) {
+    restoreSessions(restored);
+    State.notify();
+  }
   registerDelivery();
 
   island.launch();

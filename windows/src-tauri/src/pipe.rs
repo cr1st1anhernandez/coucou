@@ -81,6 +81,8 @@ pub fn set_queue(app: &AppHandle, session_id: &str, prompts: Vec<String>) {
     } else {
         map.insert(session_id.to_string(), prompts);
     }
+    drop(map);
+    crate::remember::save(app);
 }
 
 /// The next prompt for a session whose turn just ended, if one is queued.
@@ -102,6 +104,8 @@ fn drop_queued(app: &AppHandle, session_id: &str, prompt: &str) {
     if prompts.is_empty() {
         map.remove(session_id);
     }
+    drop(map);
+    crate::remember::save(app);
 }
 
 // ── Handing a queued prompt to a session that is not working ─────────────────
@@ -119,11 +123,6 @@ const TYPING_IDLE_SECS: u64 = 30;
 /// The relay types and exits in well under a second; past this, give up.
 const INJECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The Claude Code process behind each session, as the relay reported it:
-/// `(pid, creation time)`. The time lets the relay refuse a reused pid.
-#[derive(Default)]
-pub struct Terminals(pub Mutex<HashMap<String, (u32, u64)>>);
-
 /// What became of a `deliver`, for the island.
 #[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -134,7 +133,8 @@ pub enum Delivery {
     Stale,
     /// Someone is using the PC: typing now could mix with their keystrokes.
     UserActive,
-    /// The relay never told us this session's process (an older relay).
+    /// The relay never told us this session's process (an older relay, or a
+    /// session that hasn't sent an event since this relay was installed).
     NoTerminal,
     /// The relay could not type it. Still queued.
     Failed,
@@ -150,13 +150,14 @@ pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool
     if !away && crate::win_ui::idle_seconds() < TYPING_IDLE_SECS {
         return Delivery::UserActive;
     }
-    let terminal = app.state::<Terminals>().0.lock().unwrap().get(session_id).copied();
-    let Some((pid, started)) = terminal else {
+    let Some((pid, started)) = crate::remember::terminal(app, session_id) else {
         log::line(format!("queue: no terminal known for {session_id}, prompt kept"));
         return Delivery::NoTerminal;
     };
     let text = prompt.to_string();
-    let typed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, &text, None))
+    // Cleared first: something half-typed at the PC must not end up glued in
+    // front of the prompt.
+    let typed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, &text, None, true))
         .await
         .unwrap_or_else(|e| Err(e.to_string()));
     match typed {
@@ -176,7 +177,14 @@ pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool
 /// to another console changes the console of the whole process. Also types the
 /// command that starts Claude Code into a fresh Warp tab (launch.rs).
 /// `wait_ready`: wait for a freshly opened Warp shell to be set up first.
-pub(crate) fn run_inject(pid: u32, started: u64, prompt: &str, wait_ready: Option<Duration>) -> Result<(), String> {
+/// `clear`: empty Claude Code's input box before typing.
+pub(crate) fn run_inject(
+    pid: u32,
+    started: u64,
+    prompt: &str,
+    wait_ready: Option<Duration>,
+    clear: bool,
+) -> Result<(), String> {
     use std::io::{Read, Write};
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
@@ -184,6 +192,9 @@ pub(crate) fn run_inject(pid: u32, started: u64, prompt: &str, wait_ready: Optio
     let mut args = vec!["inject".to_string(), "--pid".into(), pid.to_string(), "--started".into(), started.to_string()];
     if let Some(wait) = wait_ready {
         args.extend(["--wait-ready".into(), wait.as_millis().to_string()]);
+    }
+    if clear {
+        args.push("--clear".into());
     }
     let mut child = Command::new(crate::settings::hook_exe_path())
         .args(&args)
@@ -214,16 +225,6 @@ pub(crate) fn run_inject(pid: u32, started: u64, prompt: &str, wait_ready: Optio
             }
             None => std::thread::sleep(Duration::from_millis(20)),
         }
-    }
-}
-
-/// Remembers which process a session runs in, from any event that says.
-fn note_terminal(app: &AppHandle, session_id: &str, payload: &Value) {
-    let pid = payload.get("coucou_claude_pid").and_then(Value::as_u64);
-    let started = payload.get("coucou_claude_started").and_then(Value::as_u64);
-    if let (Some(pid), Some(started)) = (pid, started) {
-        let terminals = app.state::<Terminals>();
-        terminals.0.lock().unwrap().insert(session_id.to_string(), (pid as u32, started));
     }
 }
 
@@ -305,14 +306,16 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
         .to_string();
 
     if event == "SessionEnd" {
-        app.state::<Terminals>().0.lock().unwrap().remove(&session_id);
+        crate::remember::forget(&app, &session_id);
     } else {
-        note_terminal(&app, &session_id, &payload);
+        // A Stop with a prompt waiting is answered with it: the turn goes on.
+        let queued = event == "Stop" && peek_queued(&app, &session_id).is_some();
+        crate::remember::note(&app, &session_id, &event, &payload, queued);
     }
 
     if event == "SessionStart" {
         let cwd = payload.get("cwd").and_then(Value::as_str).unwrap_or_default().to_string();
-        let terminal = app.state::<Terminals>().0.lock().unwrap().get(&session_id).copied();
+        let terminal = crate::remember::terminal(&app, &session_id);
         crate::launch::session_started(&session_id, &cwd, terminal);
         // A small file write: off the pipe's way.
         tauri::async_runtime::spawn_blocking(move || crate::launch::note_folder(&cwd));

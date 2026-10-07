@@ -31,6 +31,20 @@ export interface BootInfo {
 /** What became of a queue_deliver (pipe::Delivery). */
 export type Delivery = "sent" | "stale" | "user-active" | "no-terminal" | "failed";
 
+/** Why a queued prompt couldn't be delivered (`queue-error` for the phones). */
+export type QueueError = "no-terminal" | "failed" | "not-received";
+
+/** A session from before a restart (remember.rs). */
+export interface RestoredSession {
+  id: string;
+  cwd: string;
+  root: string | null;
+  focusUrl: string | null;
+  status: string;
+  lastEventAt: number;
+  queue: string[];
+}
+
 export const Bridge = {
   boot: () => call<BootInfo>("boot"),
 
@@ -93,6 +107,11 @@ export const Bridge = {
   /** Types the first queued prompt into the terminal of a session that isn't working. */
   queueDeliver: (sessionId: string, prompt: string, away: boolean) =>
     call<Delivery>("queue_deliver", { sessionId, prompt, away }),
+  /** Tells the phones a queued prompt couldn't be delivered, and why. */
+  phoneQueueError: (sessionId: string, reason: QueueError, prompt: string) =>
+    call<void>("phone_queue_error", { sessionId, reason, prompt }),
+  /** Sessions still running from before Coucou restarted, with their queues. */
+  sessionsRestore: () => call<RestoredSession[]>("sessions_restore"),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */

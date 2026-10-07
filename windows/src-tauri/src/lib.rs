@@ -12,6 +12,7 @@ mod library;
 mod log;
 mod phone;
 mod pipe;
+mod remember;
 mod secrets;
 mod settings;
 mod tray;
@@ -35,7 +36,7 @@ use claude_code::{Channel, CodeChats, CodeReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
-use pipe::{Pending, Queue, Terminals};
+use pipe::Pending;
 use settings::Settings;
 
 /// Keeps spawned helpers from flashing a console window.
@@ -242,6 +243,19 @@ fn question_answer(app: AppHandle, request_id: String, answers: HashMap<String, 
 #[tauri::command]
 fn queue_set(app: AppHandle, session_id: String, prompts: Vec<String>) {
     pipe::set_queue(&app, &session_id, prompts);
+}
+
+/// Sessions from before a restart whose Claude Code is still running, with
+/// their queues: the island shows them again (remember.rs).
+#[tauri::command]
+fn sessions_restore(app: AppHandle) -> Vec<remember::RestoredSession> {
+    remember::restored(&app)
+}
+
+/// A queued prompt couldn't be delivered: the phones hear why (queue-error).
+#[tauri::command]
+fn phone_queue_error(app: AppHandle, session_id: String, reason: String, prompt: String) {
+    phone::queue_error(&app, &session_id, &reason, &prompt);
 }
 
 /// A session that is not working has a queued prompt: type it into its
@@ -565,6 +579,8 @@ pub fn run() {
     let loaded = settings::load();
     let gate = Arc::new(PollGate::new());
 
+    // Sessions and queues from before a restart (remember.rs).
+    let (memory, queue) = remember::load();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = app.emit_to(island::WINDOW_LABEL, "tray", "open".to_string());
@@ -576,8 +592,8 @@ pub fn run() {
             gate: gate.clone(),
         })
         .manage(Pending::default())
-        .manage(Queue::default())
-        .manage(Terminals::default())
+        .manage(queue)
+        .manage(memory)
         .manage(phone::PhoneHub::load())
         .manage(Chat::default())
         .manage(CodeChats::default())
@@ -610,6 +626,8 @@ pub fn run() {
             approval_decline,
             queue_set,
             queue_deliver,
+            sessions_restore,
+            phone_queue_error,
             log_line,
             chat_send,
             chat_reset,
