@@ -28,6 +28,9 @@ export interface BootInfo {
   hookPath: string;
 }
 
+/** What became of a queue_deliver (pipe::Delivery). */
+export type Delivery = "sent" | "stale" | "user-active" | "no-terminal" | "failed";
+
 export const Bridge = {
   boot: () => call<BootInfo>("boot"),
 
@@ -87,6 +90,9 @@ export const Bridge = {
   /** The prompts queued for a session; Coucou sends the first one when its turn ends. */
   queueSet: (sessionId: string, prompts: string[]) =>
     call<void>("queue_set", { sessionId, prompts }),
+  /** Types the first queued prompt into the terminal of a session that isn't working. */
+  queueDeliver: (sessionId: string, prompt: string, away: boolean) =>
+    call<Delivery>("queue_deliver", { sessionId, prompt, away }),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */

@@ -20,7 +20,8 @@
 //
 // `Stop` waits too, but never for a human: we answer on the spot with the next
 // prompt queued for that session, `continue "<prompt>"`, or hang up with nothing
-// and the turn ends as usual.
+// and the turn ends as usual. A session that has already ended its turn gets its
+// queued prompt typed into its terminal instead (`deliver`).
 //
 // What we write back is the bare word `allow` or `deny`, or for a question
 // `answers {"<question>": "<label>"}` on one line. Turning that into the
@@ -103,6 +104,123 @@ fn drop_queued(app: &AppHandle, session_id: &str, prompt: &str) {
     }
 }
 
+// ── Handing a queued prompt to a session that is not working ─────────────────
+//
+// The Stop hook only delivers to a session that is busy. One that has already
+// finished its turn sits at its prompt and will never send another Stop, so the
+// island asks us to type the prompt into its terminal instead (`deliver`): the
+// relay attaches to the console of the session's Claude Code process and writes
+// the keystrokes, followed by Enter. A prompt that can't be delivered stays
+// queued; nothing is ever lost.
+
+/// No keyboard or mouse for this long and typing into a terminal can't mix
+/// with whatever the user is typing at the PC.
+const TYPING_IDLE_SECS: u64 = 30;
+/// The relay types and exits in well under a second; past this, give up.
+const INJECT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The Claude Code process behind each session, as the relay reported it:
+/// `(pid, creation time)`. The time lets the relay refuse a reused pid.
+#[derive(Default)]
+pub struct Terminals(pub Mutex<HashMap<String, (u32, u64)>>);
+
+/// What became of a `deliver`, for the island.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Delivery {
+    /// Typed into the terminal; it has left the queue.
+    Sent,
+    /// Not the first queued prompt any more (the queue changed): nothing done.
+    Stale,
+    /// Someone is using the PC: typing now could mix with their keystrokes.
+    UserActive,
+    /// The relay never told us this session's process (an older relay).
+    NoTerminal,
+    /// The relay could not type it. Still queued.
+    Failed,
+}
+
+/// Types `prompt` — which must be the session's first queued prompt — into the
+/// session's terminal. The island only asks for a session that is idle,
+/// finished or in error, with no card open; the rest is checked here.
+pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool) -> Delivery {
+    if peek_queued(app, session_id).as_deref() != Some(prompt) {
+        return Delivery::Stale;
+    }
+    if !away && crate::win_ui::idle_seconds() < TYPING_IDLE_SECS {
+        return Delivery::UserActive;
+    }
+    let terminal = app.state::<Terminals>().0.lock().unwrap().get(session_id).copied();
+    let Some((pid, started)) = terminal else {
+        log::line(format!("queue: no terminal known for {session_id}, prompt kept"));
+        return Delivery::NoTerminal;
+    };
+    let text = prompt.to_string();
+    let typed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, &text))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match typed {
+        Ok(()) => {
+            drop_queued(app, session_id, prompt);
+            log::line(format!("queue: prompt typed into the terminal of {session_id} (pid {pid})"));
+            Delivery::Sent
+        }
+        Err(err) => {
+            log::line(format!("queue: could not type into {session_id} (pid {pid}): {err} — prompt kept"));
+            Delivery::Failed
+        }
+    }
+}
+
+/// `coucou-hook inject`, prompt on stdin. Its own process because attaching
+/// to another console changes the console of the whole process.
+fn run_inject(pid: u32, started: u64, prompt: &str) -> Result<(), String> {
+    use std::io::{Read, Write};
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new(crate::settings::hook_exe_path())
+        .args(["inject", "--pid", &pid.to_string(), "--started", &started.to_string()])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        // No console of its own, so AttachConsole can take the session's.
+        .creation_flags(crate::CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("cannot start coucou-hook: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
+    }
+    let deadline = std::time::Instant::now() + INJECT_TIMEOUT;
+    loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) if status.success() => return Ok(()),
+            Some(_) => {
+                let mut why = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    let _ = stderr.read_to_string(&mut why);
+                }
+                return Err(why.trim().to_string());
+            }
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                return Err("coucou-hook timed out".into());
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    }
+}
+
+/// Remembers which process a session runs in, from any event that says.
+fn note_terminal(app: &AppHandle, session_id: &str, payload: &Value) {
+    let pid = payload.get("coucou_claude_pid").and_then(Value::as_u64);
+    let started = payload.get("coucou_claude_started").and_then(Value::as_u64);
+    if let (Some(pid), Some(started)) = (pid, started) {
+        let terminals = app.state::<Terminals>();
+        terminals.0.lock().unwrap().insert(session_id.to_string(), (pid as u32, started));
+    }
+}
+
 static COUNTER: AtomicU64 = AtomicU64::new(1);
 
 /// `\\.\pipe\coucou-<sid>` — must match coucou-hook's `pipe_path()` exactly.
@@ -179,6 +297,12 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
         .and_then(Value::as_str)
         .unwrap_or_default()
         .to_string();
+
+    if event == "SessionEnd" {
+        app.state::<Terminals>().0.lock().unwrap().remove(&session_id);
+    } else {
+        note_terminal(&app, &session_id, &payload);
+    }
 
     if event == "Stop" {
         // Answered before the island hears of it, so the island learns in the

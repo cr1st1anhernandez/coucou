@@ -34,7 +34,7 @@ use claude_code::{Channel, CodeChats, CodeReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
-use pipe::{Pending, Queue};
+use pipe::{Pending, Queue, Terminals};
 use settings::Settings;
 
 /// Keeps spawned helpers from flashing a console window.
@@ -241,6 +241,13 @@ fn question_answer(app: AppHandle, request_id: String, answers: HashMap<String, 
 #[tauri::command]
 fn queue_set(app: AppHandle, session_id: String, prompts: Vec<String>) {
     pipe::set_queue(&app, &session_id, prompts);
+}
+
+/// A session that is not working has a queued prompt: type it into its
+/// terminal. `away` is the island's own guess that the user left the PC.
+#[tauri::command]
+async fn queue_deliver(app: AppHandle, session_id: String, prompt: String, away: bool) -> pipe::Delivery {
+    pipe::deliver(&app, &session_id, &prompt, away).await
 }
 
 /// The island has the card on screen, so the long wait for a human may begin.
@@ -569,6 +576,7 @@ pub fn run() {
         })
         .manage(Pending::default())
         .manage(Queue::default())
+        .manage(Terminals::default())
         .manage(phone::PhoneHub::load())
         .manage(Chat::default())
         .manage(CodeChats::default())
@@ -600,6 +608,7 @@ pub fn run() {
             approval_ack,
             approval_decline,
             queue_set,
+            queue_deliver,
             log_line,
             chat_send,
             chat_reset,

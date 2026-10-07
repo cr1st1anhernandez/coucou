@@ -1,0 +1,87 @@
+// Queued prompts for a session that is not working.
+//
+// The Stop hook hands a busy session its next queued prompt when the turn ends
+// (pipe.rs). A session that already ended its turn sends no more Stops, so a
+// prompt queued for it — from the iPhone, typically, with the user away — would
+// wait forever. Instead Rust types it into the session's terminal and presses
+// Enter, one prompt at a time; the rest follow on the Stops after it.
+//
+// Only for a session that is idle, finished or in error, with no approval or
+// question open (a rate-limited one waits for its Stop). Rust adds the last
+// condition: nobody is typing at the PC. Nothing runs unless a session like
+// that has a queue; a retry timer exists only while one does.
+
+import { Bridge, type Delivery } from "../core/bridge";
+import { State, type ClaudeSession } from "../core/state";
+import { isAway } from "./away";
+import { appendStep, resetSummary, setStatus, takeQueued } from "./sessions";
+
+/** Statuses in which Claude Code sits at its prompt, waiting for one. */
+const AT_PROMPT: ReadonlySet<ClaudeSession["status"]> = new Set(["idle", "finished", "error"]);
+/** Someone is at the PC: ask again after this. */
+const RETRY_MS = 15_000;
+/** The terminal couldn't be reached: ask again, but rarely. */
+const FAILED_RETRY_MS = 60_000;
+
+/** Sessions with a delivery under way. */
+const inFlight = new Set<string>();
+/** Session → earliest time to ask again after a refusal. */
+const retryAt = new Map<string, number>();
+let timer: number | null = null;
+
+function ready(s: ClaudeSession): boolean {
+  return (
+    s.queue.length > 0 &&
+    AT_PROMPT.has(s.status) &&
+    State.pendingApproval?.sessionId !== s.id &&
+    State.pendingQuestion?.sessionId !== s.id
+  );
+}
+
+function check() {
+  if (State.paused) return;
+  const now = Date.now();
+  let next = Infinity;
+  for (const s of State.sessions) {
+    if (!ready(s)) {
+      retryAt.delete(s.id);
+      continue;
+    }
+    if (inFlight.has(s.id)) continue;
+    const at = retryAt.get(s.id) ?? 0;
+    if (at > now) next = Math.min(next, at);
+    else void deliver(s);
+  }
+  if (next < Infinity && timer == null) {
+    timer = window.setTimeout(() => {
+      timer = null;
+      check();
+    }, next - now);
+  }
+}
+
+async function deliver(s: ClaudeSession) {
+  const prompt = s.queue[0];
+  inFlight.add(s.id);
+  const result: Delivery = (await Bridge.queueDeliver(s.id, prompt, isAway())) ?? "failed";
+  inFlight.delete(s.id);
+  void Bridge.log(`queue deliver ${s.name}: ${result}`);
+  if (result === "sent") {
+    retryAt.delete(s.id);
+    takeQueued(s, prompt);
+    // Same as a Stop that carried a queued prompt: the session is on it now,
+    // and its UserPromptSubmit is on the way.
+    resetSummary(s);
+    setStatus(s, "thinking");
+    appendStep(s, `↻ ${prompt.slice(0, 58)}`);
+  } else {
+    const wait = result === "user-active" || result === "stale" ? RETRY_MS : FAILED_RETRY_MS;
+    retryAt.set(s.id, Date.now() + wait);
+  }
+  State.notify();
+}
+
+export function registerDelivery() {
+  State.subscribe(check);
+  check();
+}
