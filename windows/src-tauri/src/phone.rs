@@ -26,7 +26,9 @@
 // Contract v1.1 adds two `features`, announced by /api/health: "wake" (a prompt
 // queued for a session that isn't working is typed into its terminal — pipe.rs
 // and the island's deliver.ts) and "launch" (the phone opens a new session —
-// launch.rs, behind /api/folders and POST /api/sessions).
+// launch.rs, behind /api/folders and POST /api/sessions). "queue-error" adds
+// `{ t: "queue-error", … }`: a prompt queued for a session couldn't be typed
+// into its terminal, and why.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -534,6 +536,42 @@ pub fn broadcast(app: &AppHandle, message: serde_json::Value) {
     app.state::<PhoneHub>().broadcast(message);
 }
 
+/// A prompt queued for a session couldn't be delivered (deliver.ts, once per
+/// prompt and reason). Every open socket hears it; a phone that isn't looking
+/// gets a notification while the user is away, as for a finished session.
+pub fn queue_error(app: &AppHandle, session_id: &str, reason: &str, prompt: &str) {
+    if !is_running(app) || !QUEUE_ERRORS.contains(&reason) {
+        return;
+    }
+    log::line(format!("phone: queue-error for {session_id}: {reason}"));
+    let (name, targets, away) = {
+        let hub = app.state::<PhoneHub>();
+        let inner = hub.inner.lock().unwrap();
+        hub.broadcast(json!({ "t": "queue-error", "sessionId": session_id, "reason": reason, "prompt": prompt }));
+        let name = inner.sessions.iter().find(|s| s.id == session_id).map(|s| s.name.clone());
+        let looking = inner.conns.values().any(|c| c.visible);
+        (name, if looking { Vec::new() } else { push_targets(&inner) }, inner.away)
+    };
+    if targets.is_empty() || !user_away(app, away) {
+        return;
+    }
+    let why = match reason {
+        "no-terminal" => "Coucou no sabe en qué terminal está. Sigue en la cola.",
+        "not-received" => "Lo escribí pero Claude no lo recibió. Sigue en la cola.",
+        _ => "No pude escribir en su terminal. Sigue en la cola.",
+    };
+    let message = json!({
+        "title": format!("No se envió tu prompt a {}", name.as_deref().unwrap_or("la sesión")),
+        "body": why,
+        "tag": format!("queue:{session_id}"),
+        "url": format!("/#/session/{session_id}"),
+    });
+    send_push(app, targets, message, "normal");
+}
+
+/// `reason` values of `queue-error` (contract v1.1).
+const QUEUE_ERRORS: &[&str] = &["no-terminal", "failed", "not-received"];
+
 /// Whether the phones' list already has this session.
 pub fn has_session(app: &AppHandle, session_id: &str) -> bool {
     let hub = app.state::<PhoneHub>();
@@ -875,7 +913,7 @@ fn router(app: AppHandle) -> Router {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "features": ["wake", "launch"] }))
+    Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "features": ["wake", "launch", "queue-error"] }))
 }
 
 /// Who is asking: the device behind the `coucou_phone` cookie, if any.

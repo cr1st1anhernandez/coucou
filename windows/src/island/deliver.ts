@@ -13,8 +13,11 @@
 //
 // Typed is not yet received: if the session's UserPromptSubmit doesn't follow
 // within CONFIRM_MS, the prompt goes back to the front of the queue.
+//
+// When a prompt can't be delivered the phones hear why (`queue-error`), once
+// per prompt and reason: the retries that follow don't repeat it.
 
-import { Bridge, type Delivery } from "../core/bridge";
+import { Bridge, type Delivery, type QueueError } from "../core/bridge";
 import { State, type ClaudeSession } from "../core/state";
 import { isAway } from "./away";
 import { MAX_QUEUE, appendStep, resetSummary, setStatus, takeQueued } from "./sessions";
@@ -33,6 +36,8 @@ const inFlight = new Set<string>();
 /** Session → earliest time to ask again after a refusal. */
 const retryAt = new Map<string, number>();
 let timer: number | null = null;
+/** Session → the last `queue-error` the phones heard for it (reason + prompt). */
+const reported = new Map<string, string>();
 /** Session → the prompt just typed into it, until its UserPromptSubmit. */
 const unconfirmed = new Map<string, { prompt: string; status: ClaudeSession["status"]; timer: number }>();
 
@@ -52,6 +57,7 @@ function check() {
   for (const s of State.sessions) {
     if (!ready(s)) {
       retryAt.delete(s.id);
+      reported.delete(s.id);
       continue;
     }
     if (inFlight.has(s.id) || unconfirmed.has(s.id)) continue;
@@ -75,6 +81,7 @@ async function deliver(s: ClaudeSession) {
   void Bridge.log(`queue deliver ${s.name}: ${result}`);
   if (result === "sent") {
     retryAt.delete(s.id);
+    reported.delete(s.id);
     const status = s.status;
     unconfirmed.set(s.id, { prompt, status, timer: window.setTimeout(() => unanswered(s.id), CONFIRM_MS) });
     takeQueued(s, prompt);
@@ -86,6 +93,7 @@ async function deliver(s: ClaudeSession) {
   } else {
     const wait = result === "user-active" || result === "stale" ? RETRY_MS : FAILED_RETRY_MS;
     retryAt.set(s.id, Date.now() + wait);
+    if (result === "no-terminal" || result === "failed") report(s.id, result, prompt);
   }
   State.notify();
 }
@@ -97,6 +105,7 @@ function unanswered(sessionId: string) {
   const s = State.sessions.find((x) => x.id === sessionId);
   if (!pending || !s) return;
   void Bridge.log(`queue deliver ${s.name}: no UserPromptSubmit, prompt back in the queue`);
+  report(s.id, "not-received", pending.prompt);
   // Before anything that could run check(): no instant retype.
   retryAt.set(s.id, Date.now() + FAILED_RETRY_MS);
   s.queue = [pending.prompt, ...s.queue].slice(0, MAX_QUEUE);
@@ -104,6 +113,14 @@ function unanswered(sessionId: string) {
   // Undo the "thinking" the delivery assumed, unless something else happened.
   if (s.status === "thinking") setStatus(s, pending.status);
   State.notify();
+}
+
+/** Tells the phones, unless they already heard this same reason for this prompt. */
+function report(sessionId: string, reason: QueueError, prompt: string) {
+  const key = `${reason}\n${prompt}`;
+  if (reported.get(sessionId) === key) return;
+  reported.set(sessionId, key);
+  void Bridge.phoneQueueError(sessionId, reason, prompt);
 }
 
 /** hooks.ts, on every UserPromptSubmit: a typed prompt made it. */
