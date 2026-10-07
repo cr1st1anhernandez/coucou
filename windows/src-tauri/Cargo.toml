@@ -25,6 +25,7 @@ keyring = { version = "3", features = ["windows-native"] }
 # The #[implement] macro behind the island's own file drop target needs it by name.
 windows-core = "0.61"
 windows = { version = "0.61", features = [
+  "Wdk_System_Threading",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Security",
@@ -32,6 +33,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_DataExchange",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_SystemInformation",

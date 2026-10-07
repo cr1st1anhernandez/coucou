@@ -7,6 +7,7 @@ mod files;
 mod hooks;
 mod integrations;
 mod island;
+mod launch;
 mod library;
 mod log;
 mod phone;

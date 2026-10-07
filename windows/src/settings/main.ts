@@ -401,7 +401,45 @@ function phoneSection(): HTMLElement {
     }
 
     if (!status.running) return;
-    body.append(pairRow(), await deviceList());
+    body.append(pairRow(), await deviceList(), ...launchRows());
+  }
+
+  /** Where the iPhone may open new sessions, and whether it may skip permissions. */
+  function launchRows(): HTMLElement[] {
+    const roots = h("input", {
+      type: "text",
+      value: settings.phoneLaunchRoots.join("; "),
+      placeholder: "C:\\Users\\…\\Projects",
+      spellcheck: "false",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    const saved = h("span", { class: "hint" });
+    const saveRoots = h("button", {
+      text: "Guardar",
+      onclick: async () => {
+        settings.phoneLaunchRoots = roots.value.split(";").map((r) => r.trim()).filter(Boolean);
+        await save();
+        saved.textContent = "Guardado.";
+      },
+    });
+    return [
+      h("div", {
+        class: "hint",
+        text: "Desde el iPhone puedes abrir una sesión nueva de Claude Code en cualquier subcarpeta de estas carpetas (sepáralas con ;) o donde ya hayas trabajado. Solo en carpetas en las que Claude Code ya confía.",
+      }),
+      h("div", { class: "row" }, h("label", { text: "Carpetas" }), roots, saveRoots, saved),
+      h("div", { class: "row" },
+        h("label", { text: "Permitir que el iPhone abra sesiones sin permisos" }),
+        toggle(settings.phoneSkipPermissions, (v) => {
+          settings.phoneSkipPermissions = v;
+          void save();
+        }),
+      ),
+      h("div", {
+        class: "hint",
+        text: "Con esto encendido, el iPhone puede arrancar Claude Code con --dangerously-skip-permissions: hará cambios y correrá comandos sin pedirte aprobación. Además necesita \"skipDangerousModePermissionPrompt\": true en ~/.claude/settings.json; si no, Claude Code se detiene en su advertencia.",
+      }),
+    ];
   }
 
   /** "Emparejar iPhone" → a big one-time code, gone after 5 minutes. */

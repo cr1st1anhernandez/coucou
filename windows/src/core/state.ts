@@ -210,6 +210,10 @@ export interface Settings {
   pasteModes: PasteModes;
   /** "Acceso desde el iPhone": the phone server runs only while this is on. */
   phoneEnabled: boolean;
+  /** Folders whose direct subfolders the iPhone may open a session in. */
+  phoneLaunchRoots: string[];
+  /** The iPhone may open sessions with --dangerously-skip-permissions. */
+  phoneSkipPermissions: boolean;
 }
 
 /** Seconds the open island waits after the mouse leaves before closing. */
@@ -230,6 +234,9 @@ export const DEFAULT_SETTINGS: Settings = {
   chatEngine: "claudeCode",
   pasteModes: { copy: true, warp: true, paste: false },
   phoneEnabled: false,
+  // Rust fills the real default (%USERPROFILE%\Projects) before anything shows.
+  phoneLaunchRoots: [],
+  phoneSkipPermissions: false,
 };
 
 type Listener = () => void;

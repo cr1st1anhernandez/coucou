@@ -22,6 +22,11 @@
 // Sessions live in the island's front end, not here: the island publishes a
 // snapshot (`phone_publish`) whenever one changes, and the server hands it on
 // to every open WebSocket.
+//
+// Contract v1.1 adds two `features`, announced by /api/health: "wake" (a prompt
+// queued for a session that isn't working is typed into its terminal — pipe.rs
+// and the island's deliver.ts) and "launch" (the phone opens a new session —
+// launch.rs, behind /api/folders and POST /api/sessions).
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -359,6 +364,11 @@ fn random_bytes<const N: usize>() -> [u8; N] {
     buf
 }
 
+/// A random id for a launch: 16 hex digits.
+pub fn random_id() -> String {
+    random_bytes::<8>().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// Six digits, uniformly drawn.
 fn random_code() -> String {
     loop {
@@ -517,6 +527,18 @@ pub fn publish(app: &AppHandle, sessions: Vec<PhoneSession>, away: bool) {
     for message in news {
         send_push(app, targets.clone(), message, "normal");
     }
+}
+
+/// A message for every open socket (launch.rs: `{ t: "launch", … }`).
+pub fn broadcast(app: &AppHandle, message: serde_json::Value) {
+    app.state::<PhoneHub>().broadcast(message);
+}
+
+/// Whether the phones' list already has this session.
+pub fn has_session(app: &AppHandle, session_id: &str) -> bool {
+    let hub = app.state::<PhoneHub>();
+    let inner = hub.inner.lock().unwrap();
+    inner.sessions.iter().any(|s| s.id == session_id)
 }
 
 /// Sessions that just finished, failed or hit their limit, as push messages.
@@ -844,6 +866,8 @@ fn router(app: AppHandle) -> Router {
         .route("/api/approvals/{id}", post(decide_approval))
         .route("/api/questions/{id}", post(answer_question))
         .route("/api/sessions/{id}/queue", put(set_queue))
+        .route("/api/folders", get(get_folders))
+        .route("/api/sessions", post(launch_session))
         .route("/api/push/key", get(push_key))
         .route("/api/push/subscribe", post(push_subscribe).delete(push_unsubscribe))
         .fallback(static_file)
@@ -851,7 +875,7 @@ fn router(app: AppHandle) -> Router {
 }
 
 async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") }))
+    Json(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION"), "features": ["wake", "launch"] }))
 }
 
 /// Who is asking: the device behind the `coucou_phone` cookie, if any.
@@ -1123,6 +1147,52 @@ async fn set_queue(
     log::line(format!("phone: queue for {id} ({} prompt(s))", prompts.len()));
     let _ = app.emit_to(WINDOW_LABEL, "phone-queue", json!({ "sessionId": id, "prompts": prompts }));
     status_only(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/folders`: where the phone may open a session.
+async fn get_folders(State(app): State<AppHandle>, headers: HeaderMap) -> Response {
+    if authenticate(&app, &headers).is_none() {
+        return status_only(StatusCode::UNAUTHORIZED);
+    }
+    let can_skip = app.state::<crate::Shared>().settings.lock().unwrap().phone_skip_permissions;
+    // Reads a directory or two and ~/.claude.json: off the async threads.
+    let handle = app.clone();
+    let folders = tauri::async_runtime::spawn_blocking(move || crate::launch::folders(&handle))
+        .await
+        .unwrap_or_default();
+    Json(json!({ "folders": folders, "canSkipPermissions": can_skip })).into_response()
+}
+
+/// `POST /api/sessions`: open a new Claude Code session. 202 once it's on its
+/// way; how it went arrives on the socket as `{ t: "launch", … }`.
+async fn launch_session(State(app): State<AppHandle>, headers: HeaderMap, body: Bytes) -> Response {
+    let Some(caller) = authenticate(&app, &headers) else {
+        return status_only(StatusCode::UNAUTHORIZED);
+    };
+    if !write_allowed(&headers) {
+        return status_only(StatusCode::FORBIDDEN);
+    }
+    let Ok(body) = serde_json::from_slice::<crate::launch::LaunchBody>(&body) else {
+        return status_only(StatusCode::BAD_REQUEST);
+    };
+    let handle = app.clone();
+    let device_id = caller.device_id.clone();
+    let started = tauri::async_runtime::spawn_blocking(move || crate::launch::start(&handle, &device_id, body, MAX_PROMPT))
+        .await;
+    use crate::launch::Refused;
+    match started {
+        Ok(Ok(launch_id)) => (StatusCode::ACCEPTED, Json(json!({ "launchId": launch_id }))).into_response(),
+        Ok(Err(refused)) => {
+            log::line(format!("phone: launch refused ({refused:?}) for {}", caller.device));
+            status_only(match refused {
+                Refused::BadRequest => StatusCode::BAD_REQUEST,
+                Refused::Forbidden => StatusCode::FORBIDDEN,
+                Refused::NoTerminal => StatusCode::CONFLICT,
+                Refused::TooSoon => StatusCode::TOO_MANY_REQUESTS,
+            })
+        }
+        Err(_) => status_only(StatusCode::INTERNAL_SERVER_ERROR),
+    }
 }
 
 async fn push_key(State(app): State<AppHandle>, headers: HeaderMap) -> Response {

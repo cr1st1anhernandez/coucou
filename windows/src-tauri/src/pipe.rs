@@ -156,7 +156,7 @@ pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool
         return Delivery::NoTerminal;
     };
     let text = prompt.to_string();
-    let typed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, &text))
+    let typed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, &text, None))
         .await
         .unwrap_or_else(|e| Err(e.to_string()));
     match typed {
@@ -173,14 +173,20 @@ pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool
 }
 
 /// `coucou-hook inject`, prompt on stdin. Its own process because attaching
-/// to another console changes the console of the whole process.
-fn run_inject(pid: u32, started: u64, prompt: &str) -> Result<(), String> {
+/// to another console changes the console of the whole process. Also types the
+/// command that starts Claude Code into a fresh Warp tab (launch.rs).
+/// `wait_ready`: wait for a freshly opened Warp shell to be set up first.
+pub(crate) fn run_inject(pid: u32, started: u64, prompt: &str, wait_ready: Option<Duration>) -> Result<(), String> {
     use std::io::{Read, Write};
     use std::os::windows::process::CommandExt;
     use std::process::{Command, Stdio};
 
+    let mut args = vec!["inject".to_string(), "--pid".into(), pid.to_string(), "--started".into(), started.to_string()];
+    if let Some(wait) = wait_ready {
+        args.extend(["--wait-ready".into(), wait.as_millis().to_string()]);
+    }
     let mut child = Command::new(crate::settings::hook_exe_path())
-        .args(["inject", "--pid", &pid.to_string(), "--started", &started.to_string()])
+        .args(&args)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -191,7 +197,7 @@ fn run_inject(pid: u32, started: u64, prompt: &str) -> Result<(), String> {
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(prompt.as_bytes()).map_err(|e| format!("stdin: {e}"))?;
     }
-    let deadline = std::time::Instant::now() + INJECT_TIMEOUT;
+    let deadline = std::time::Instant::now() + INJECT_TIMEOUT + wait_ready.unwrap_or_default();
     loop {
         match child.try_wait().map_err(|e| e.to_string())? {
             Some(status) if status.success() => return Ok(()),
@@ -302,6 +308,14 @@ async fn handle(app: AppHandle, mut pipe: NamedPipeServer) {
         app.state::<Terminals>().0.lock().unwrap().remove(&session_id);
     } else {
         note_terminal(&app, &session_id, &payload);
+    }
+
+    if event == "SessionStart" {
+        let cwd = payload.get("cwd").and_then(Value::as_str).unwrap_or_default().to_string();
+        let terminal = app.state::<Terminals>().0.lock().unwrap().get(&session_id).copied();
+        crate::launch::session_started(&session_id, &cwd, terminal);
+        // A small file write: off the pipe's way.
+        tauri::async_runtime::spawn_blocking(move || crate::launch::note_folder(&cwd));
     }
 
     if event == "Stop" {

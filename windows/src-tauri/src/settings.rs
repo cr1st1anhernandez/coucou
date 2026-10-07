@@ -34,6 +34,11 @@ pub struct Settings {
     pub paste_modes: PasteModes,
     /// "Acceso desde el iPhone": the phone server (phone.rs) runs only while on.
     pub phone_enabled: bool,
+    /// Folders whose direct subfolders the iPhone may open a session in.
+    pub phone_launch_roots: Vec<String>,
+    /// "Permitir que el iPhone abra sesiones sin permisos": the phone may
+    /// launch Claude Code with --dangerously-skip-permissions. Off by default.
+    pub phone_skip_permissions: bool,
 }
 
 /// The library's three ways to take a prompt to the terminal. At least one is
@@ -100,6 +105,8 @@ impl Default for Settings {
             chat_engine: "claudeCode".into(),
             paste_modes: PasteModes::default(),
             phone_enabled: false,
+            phone_launch_roots: crate::launch::default_roots(),
+            phone_skip_permissions: false,
         }
     }
 }
