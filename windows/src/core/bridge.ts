@@ -110,6 +110,9 @@ export const Bridge = {
   /** A typed prompt never arrived: presses Enter once more in that terminal. */
   queuePressEnter: (sessionId: string, away: boolean) =>
     call<boolean>("queue_press_enter", { sessionId, away }),
+  /** A typed prompt went back to the queue: empties the input box it sits in. */
+  queueClearInput: (sessionId: string, away: boolean) =>
+    call<boolean>("queue_clear_input", { sessionId, away }),
   /** Tells the phones a queued prompt couldn't be delivered, and why. */
   phoneQueueError: (sessionId: string, reason: QueueError, prompt: string) =>
     call<void>("phone_queue_error", { sessionId, reason, prompt }),

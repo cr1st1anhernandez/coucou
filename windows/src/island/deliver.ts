@@ -14,7 +14,7 @@
 // Typed is not yet received: if the session's UserPromptSubmit doesn't follow
 // within CONFIRM_MS, the text is most likely still in the input box with its
 // Enter lost, so Enter is pressed once more. Another CONFIRM_MS without it and
-// the prompt goes back to the front of the queue.
+// the prompt goes back to the front of the queue, and out of the input box.
 //
 // When a prompt can't be delivered the phones hear why (`queue-error`), once
 // per prompt and reason: the retries that follow don't repeat it.
@@ -129,6 +129,9 @@ async function unanswered(sessionId: string) {
   retryAt.set(s.id, Date.now() + FAILED_RETRY_MS);
   s.queue = [pending.prompt, ...s.queue].slice(0, MAX_QUEUE);
   void Bridge.queueSet(s.id, s.queue);
+  // It is back in the queue, so it must not also wait in the input box: an
+  // Enter at the PC would send it now, and the queue again later.
+  void Bridge.queueClearInput(s.id, isAway());
   // Undo the "thinking" the delivery assumed, unless something else happened.
   if (s.status === "thinking") setStatus(s, pending.status);
   State.notify();

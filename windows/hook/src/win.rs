@@ -184,13 +184,16 @@ fn same_process(pid: u32, started: u64) -> bool {
 /// behind something left half-typed at the PC (see `CLEAR_PRESSES`).
 ///
 /// An empty `text` only presses Enter: Coucou's second try when a typed
-/// prompt is still sitting in the input box, unsent.
+/// prompt is still sitting in the input box, unsent. With `clear` and no
+/// `press_enter` it only empties the box: Coucou gave up on that prompt and put it
+/// back in the queue, so it must not stay there to be sent twice.
 pub fn inject(
     pid: u32,
     started: u64,
     text: &str,
     wait_ready: Option<std::time::Duration>,
     clear: bool,
+    press_enter: bool,
 ) -> Result<(), String> {
     if !same_process(pid, started) {
         return Err(format!("process {pid} is no longer that Claude Code session"));
@@ -232,6 +235,9 @@ pub fn inject(
                 Vec::new()
             };
             let sent = write_input(input, &wipe).and_then(|()| write_input(input, &typed)).and_then(|()| {
+                if !press_enter {
+                    return Ok(());
+                }
                 // A beat before Enter, so the text doesn't arrive as one paste
                 // that swallows the Enter with it. Claude Code takes longer to
                 // digest a long prompt, so the beat grows with it.

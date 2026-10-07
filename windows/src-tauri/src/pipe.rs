@@ -178,20 +178,33 @@ pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool
 /// the input box. Not while someone is at the PC: their Enter could be
 /// pressed for them, on whatever they are typing.
 pub async fn press_enter(app: &AppHandle, session_id: &str, away: bool) -> bool {
+    touch_input(app, session_id, away, false, "press Enter again").await
+}
+
+/// Empties a session's input box: a typed prompt never arrived, even after a
+/// second Enter, and is back in the queue. Left there, an Enter at the PC
+/// would send it now and the queue would send it again later. Same rule as
+/// `press_enter`: not while someone is at the PC.
+pub async fn clear_input(app: &AppHandle, session_id: &str, away: bool) -> bool {
+    touch_input(app, session_id, away, true, "clear the input box").await
+}
+
+/// Enter alone, or (`clear`) Ctrl+U alone, in a session's terminal.
+async fn touch_input(app: &AppHandle, session_id: &str, away: bool, clear: bool, what: &str) -> bool {
     if !away && crate::win_ui::idle_seconds() < TYPING_IDLE_SECS {
         return false;
     }
     let Some((pid, started)) = crate::remember::terminal(app, session_id) else { return false };
-    let pressed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, "", None, false))
+    let done = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, "", None, clear))
         .await
         .unwrap_or_else(|e| Err(e.to_string()));
-    match pressed {
+    match done {
         Ok(()) => {
-            log::line(format!("queue: Enter pressed again in {session_id} (pid {pid})"));
+            log::line(format!("queue: {what} in {session_id} (pid {pid})"));
             true
         }
         Err(err) => {
-            log::line(format!("queue: could not press Enter again in {session_id} (pid {pid}): {err}"));
+            log::line(format!("queue: could not {what} in {session_id} (pid {pid}): {err}"));
             false
         }
     }
@@ -202,7 +215,8 @@ pub async fn press_enter(app: &AppHandle, session_id: &str, away: bool) -> bool 
 /// command that starts Claude Code into a fresh Warp tab (launch.rs).
 /// `wait_ready`: wait for a freshly opened Warp shell to be set up first.
 /// `clear`: empty Claude Code's input box before typing.
-/// An empty `prompt` only presses Enter (`--enter-only`).
+/// An empty `prompt` only presses Enter (`--enter-only`), or with `clear`
+/// only empties the input box (`--clear-only`).
 pub(crate) fn run_inject(
     pid: u32,
     started: u64,
@@ -218,11 +232,11 @@ pub(crate) fn run_inject(
     if let Some(wait) = wait_ready {
         args.extend(["--wait-ready".into(), wait.as_millis().to_string()]);
     }
-    if clear {
-        args.push("--clear".into());
-    }
-    if prompt.is_empty() {
-        args.push("--enter-only".into());
+    match (prompt.is_empty(), clear) {
+        (true, true) => args.push("--clear-only".into()),
+        (true, false) => args.push("--enter-only".into()),
+        (false, true) => args.push("--clear".into()),
+        (false, false) => {}
     }
     let mut child = Command::new(crate::settings::hook_exe_path())
         .args(&args)
