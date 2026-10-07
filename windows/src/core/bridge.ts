@@ -107,6 +107,9 @@ export const Bridge = {
   /** Types the first queued prompt into the terminal of a session that isn't working. */
   queueDeliver: (sessionId: string, prompt: string, away: boolean) =>
     call<Delivery>("queue_deliver", { sessionId, prompt, away }),
+  /** A typed prompt never arrived: presses Enter once more in that terminal. */
+  queuePressEnter: (sessionId: string, away: boolean) =>
+    call<boolean>("queue_press_enter", { sessionId, away }),
   /** Tells the phones a queued prompt couldn't be delivered, and why. */
   phoneQueueError: (sessionId: string, reason: QueueError, prompt: string) =>
     call<void>("phone_queue_error", { sessionId, reason, prompt }),

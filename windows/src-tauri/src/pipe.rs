@@ -173,11 +173,36 @@ pub async fn deliver(app: &AppHandle, session_id: &str, prompt: &str, away: bool
     }
 }
 
+/// Presses Enter again in a session's terminal: a prompt `deliver` typed has
+/// not shown up as a UserPromptSubmit, so it is most likely still sitting in
+/// the input box. Not while someone is at the PC: their Enter could be
+/// pressed for them, on whatever they are typing.
+pub async fn press_enter(app: &AppHandle, session_id: &str, away: bool) -> bool {
+    if !away && crate::win_ui::idle_seconds() < TYPING_IDLE_SECS {
+        return false;
+    }
+    let Some((pid, started)) = crate::remember::terminal(app, session_id) else { return false };
+    let pressed = tauri::async_runtime::spawn_blocking(move || run_inject(pid, started, "", None, false))
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+    match pressed {
+        Ok(()) => {
+            log::line(format!("queue: Enter pressed again in {session_id} (pid {pid})"));
+            true
+        }
+        Err(err) => {
+            log::line(format!("queue: could not press Enter again in {session_id} (pid {pid}): {err}"));
+            false
+        }
+    }
+}
+
 /// `coucou-hook inject`, prompt on stdin. Its own process because attaching
 /// to another console changes the console of the whole process. Also types the
 /// command that starts Claude Code into a fresh Warp tab (launch.rs).
 /// `wait_ready`: wait for a freshly opened Warp shell to be set up first.
 /// `clear`: empty Claude Code's input box before typing.
+/// An empty `prompt` only presses Enter (`--enter-only`).
 pub(crate) fn run_inject(
     pid: u32,
     started: u64,
@@ -195,6 +220,9 @@ pub(crate) fn run_inject(
     }
     if clear {
         args.push("--clear".into());
+    }
+    if prompt.is_empty() {
+        args.push("--enter-only".into());
     }
     let mut child = Command::new(crate::settings::hook_exe_path())
         .args(&args)

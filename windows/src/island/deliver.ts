@@ -12,7 +12,9 @@
 // that has a queue; a retry timer exists only while one does.
 //
 // Typed is not yet received: if the session's UserPromptSubmit doesn't follow
-// within CONFIRM_MS, the prompt goes back to the front of the queue.
+// within CONFIRM_MS, the text is most likely still in the input box with its
+// Enter lost, so Enter is pressed once more. Another CONFIRM_MS without it and
+// the prompt goes back to the front of the queue.
 //
 // When a prompt can't be delivered the phones hear why (`queue-error`), once
 // per prompt and reason: the retries that follow don't repeat it.
@@ -39,7 +41,10 @@ let timer: number | null = null;
 /** Session → the last `queue-error` the phones heard for it (reason + prompt). */
 const reported = new Map<string, string>();
 /** Session → the prompt just typed into it, until its UserPromptSubmit. */
-const unconfirmed = new Map<string, { prompt: string; status: ClaudeSession["status"]; timer: number }>();
+const unconfirmed = new Map<
+  string,
+  { prompt: string; status: ClaudeSession["status"]; timer: number; retried: boolean }
+>();
 
 function ready(s: ClaudeSession): boolean {
   return (
@@ -83,7 +88,8 @@ async function deliver(s: ClaudeSession) {
     retryAt.delete(s.id);
     reported.delete(s.id);
     const status = s.status;
-    unconfirmed.set(s.id, { prompt, status, timer: window.setTimeout(() => unanswered(s.id), CONFIRM_MS) });
+    const timer = window.setTimeout(() => void unanswered(s.id), CONFIRM_MS);
+    unconfirmed.set(s.id, { prompt, status, timer, retried: false });
     takeQueued(s, prompt);
     // Same as a Stop that carried a queued prompt: the session is on it now,
     // and its UserPromptSubmit is on the way.
@@ -98,9 +104,22 @@ async function deliver(s: ClaudeSession) {
   State.notify();
 }
 
-/** No UserPromptSubmit after a typed prompt: it goes back to the front of the queue. */
-function unanswered(sessionId: string) {
+/**
+ * No UserPromptSubmit after a typed prompt: Enter once more, the first time;
+ * after that it goes back to the front of the queue.
+ */
+async function unanswered(sessionId: string) {
   const pending = unconfirmed.get(sessionId);
+  if (pending && !pending.retried) {
+    pending.retried = true;
+    const pressed = (await Bridge.queuePressEnter(sessionId, isAway())) ?? false;
+    // The prompt may have arrived while Enter was on its way.
+    if (unconfirmed.get(sessionId) !== pending) return;
+    if (pressed) {
+      pending.timer = window.setTimeout(() => void unanswered(sessionId), CONFIRM_MS);
+      return;
+    }
+  }
   unconfirmed.delete(sessionId);
   const s = State.sessions.find((x) => x.id === sessionId);
   if (!pending || !s) return;
