@@ -265,6 +265,12 @@ async fn queue_deliver(app: AppHandle, session_id: String, prompt: String, away:
     pipe::deliver(&app, &session_id, &prompt, away).await
 }
 
+/// A prompt `queue_deliver` typed never arrived: press Enter once more.
+#[tauri::command]
+async fn queue_press_enter(app: AppHandle, session_id: String, away: bool) -> bool {
+    pipe::press_enter(&app, &session_id, away).await
+}
+
 /// The island has the card on screen, so the long wait for a human may begin.
 /// Until this arrives the relay only waits a few hundred milliseconds, which is
 /// what stops a paused or unresponsive island from freezing Claude Code.
@@ -626,6 +632,7 @@ pub fn run() {
             approval_decline,
             queue_set,
             queue_deliver,
+            queue_press_enter,
             sessions_restore,
             phone_queue_error,
             log_line,

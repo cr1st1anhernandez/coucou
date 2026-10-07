@@ -182,6 +182,9 @@ fn same_process(pid: u32, started: u64) -> bool {
 ///
 /// `clear` first empties Claude Code's input box, so a prompt never lands
 /// behind something left half-typed at the PC (see `CLEAR_PRESSES`).
+///
+/// An empty `text` only presses Enter: Coucou's second try when a typed
+/// prompt is still sitting in the input box, unsent.
 pub fn inject(
     pid: u32,
     started: u64,
@@ -230,8 +233,11 @@ pub fn inject(
             };
             let sent = write_input(input, &wipe).and_then(|()| write_input(input, &typed)).and_then(|()| {
                 // A beat before Enter, so the text doesn't arrive as one paste
-                // that swallows the Enter with it.
-                std::thread::sleep(std::time::Duration::from_millis(100));
+                // that swallows the Enter with it. Claude Code takes longer to
+                // digest a long prompt, so the beat grows with it.
+                if !typed.is_empty() {
+                    std::thread::sleep(enter_delay(typed.len() / 2));
+                }
                 write_input(input, &enter)
             });
             let _ = CloseHandle(input);
@@ -240,6 +246,15 @@ pub fn inject(
         let _ = FreeConsole();
         result
     }
+}
+
+/// The pause between the last typed character and Enter: 100 ms was enough
+/// for a short prompt, but Claude Code ate the Enter after ~150 characters.
+fn enter_delay(units: usize) -> std::time::Duration {
+    const BASE_MS: u64 = 150;
+    const PER_UNIT_MS: u64 = 2;
+    const MAX_MS: u64 = 1_500;
+    std::time::Duration::from_millis((BASE_MS + PER_UNIT_MS * units as u64).min(MAX_MS))
 }
 
 /// Polls the attached console's title until it is no longer a program path.
