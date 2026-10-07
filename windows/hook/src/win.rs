@@ -179,7 +179,16 @@ fn same_process(pid: u32, started: u64) -> bool {
 /// that runs first and swallows it. Once bootstrapped, Warp's prompt hook sets
 /// the console title to the current folder; until then it is the shell's own
 /// path. So we wait, up to `wait_ready`, for the title to stop ending in `.exe`.
-pub fn inject(pid: u32, started: u64, text: &str, wait_ready: Option<std::time::Duration>) -> Result<(), String> {
+///
+/// `clear` first empties Claude Code's input box, so a prompt never lands
+/// behind something left half-typed at the PC (see `CLEAR_PRESSES`).
+pub fn inject(
+    pid: u32,
+    started: u64,
+    text: &str,
+    wait_ready: Option<std::time::Duration>,
+    clear: bool,
+) -> Result<(), String> {
     if !same_process(pid, started) {
         return Err(format!("process {pid} is no longer that Claude Code session"));
     }
@@ -210,8 +219,16 @@ pub fn inject(pid: u32, started: u64, text: &str, wait_ready: Option<std::time::
         )
         .map_err(|e| format!("CONIN$: {e}"))
         .and_then(|input| {
-            let enter = enter_for(input);
-            let sent = write_input(input, &typed).and_then(|()| {
+            let vt = vt_input(input);
+            let enter = enter_for(vt);
+            // Only Claude Code itself (VT input) knows Ctrl+U; elsewhere the
+            // bare character could end up typed.
+            let wipe: Vec<INPUT_RECORD> = if clear && vt {
+                (0..CLEAR_PRESSES).flat_map(|_| [key(true, CTRL_U), key(false, CTRL_U)]).collect()
+            } else {
+                Vec::new()
+            };
+            let sent = write_input(input, &wipe).and_then(|()| write_input(input, &typed)).and_then(|()| {
                 // A beat before Enter, so the text doesn't arrive as one paste
                 // that swallows the Enter with it.
                 std::thread::sleep(std::time::Duration::from_millis(100));
@@ -242,6 +259,19 @@ unsafe fn wait_for_title(limit: std::time::Duration) -> bool {
     }
 }
 
+/// Ctrl+U: Claude Code deletes the current line of its input box. On an empty
+/// box it does nothing (the grey suggested prompt stays a suggestion).
+const CTRL_U: u16 = 0x15;
+/// One press per line: enough for anything half-typed, multi-line included.
+const CLEAR_PRESSES: usize = 8;
+
+/// Whether the console is in VT input mode: Claude Code's is, a shell's own
+/// line editor isn't.
+unsafe fn vt_input(input: HANDLE) -> bool {
+    let mut mode = CONSOLE_MODE(0);
+    GetConsoleMode(input, &mut mode).is_ok() && mode.contains(ENABLE_VIRTUAL_TERMINAL_INPUT)
+}
+
 /// Enter, the way this console takes it.
 ///
 /// A console in VT input mode (Claude Code itself) gets the bare character CR:
@@ -249,11 +279,9 @@ unsafe fn wait_for_title(limit: std::time::Duration) -> bool {
 /// sequence it reads as "new line", not "send". A console without it (a
 /// shell's own line editor) wants the real VK_RETURN key: PowerShell ignores a
 /// bare CR there.
-unsafe fn enter_for(input: HANDLE) -> [INPUT_RECORD; 2] {
+fn enter_for(vt: bool) -> [INPUT_RECORD; 2] {
     const VK_RETURN: u16 = 0x0D;
     const SCAN_RETURN: u16 = 0x1C;
-    let mut mode = CONSOLE_MODE(0);
-    let vt = GetConsoleMode(input, &mut mode).is_ok() && mode.contains(ENABLE_VIRTUAL_TERMINAL_INPUT);
     let (vk, scan) = if vt { (0, 0) } else { (VK_RETURN, SCAN_RETURN) };
     [key_event(true, vk, scan, 13), key_event(false, vk, scan, 13)]
 }

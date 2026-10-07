@@ -19,7 +19,7 @@
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
 //!
-//! `coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>]` is
+//! `coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear]` is
 //! Coucou's, not Claude Code's: it types the text on stdin into that process's
 //! console and presses Enter. Coucou uses it to hand a prompt queued on the
 //! iPhone to a session that has finished its turn and would otherwise never get
@@ -120,7 +120,7 @@ fn main() {
     std::process::exit(0);
 }
 
-/// `inject --pid <pid> --started <time> [--wait-ready <ms>]`, text on stdin.
+/// `inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear]`, text on stdin.
 /// Exit code 0 when the text was typed, 1 otherwise, with the reason on stderr
 /// for Coucou's log.
 fn inject() -> i32 {
@@ -132,7 +132,7 @@ fn inject() -> i32 {
             .and_then(|v| v.parse::<u64>().ok())
     };
     let (Some(pid), Some(started)) = (value("--pid"), value("--started")) else {
-        eprintln!("usage: coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>]");
+        eprintln!("usage: coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear]");
         return 1;
     };
     let mut prompt = String::new();
@@ -141,7 +141,8 @@ fn inject() -> i32 {
         return 1;
     }
     let wait_ready = value("--wait-ready").map(Duration::from_millis);
-    match win::inject(pid as u32, started, prompt.trim(), wait_ready) {
+    let clear = args.iter().any(|a| a == "--clear");
+    match win::inject(pid as u32, started, prompt.trim(), wait_ready, clear) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err}");
