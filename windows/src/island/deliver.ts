@@ -10,11 +10,14 @@
 // question open (a rate-limited one waits for its Stop). Rust adds the last
 // condition: nobody is typing at the PC. Nothing runs unless a session like
 // that has a queue; a retry timer exists only while one does.
+//
+// Typed is not yet received: if the session's UserPromptSubmit doesn't follow
+// within CONFIRM_MS, the prompt goes back to the front of the queue.
 
 import { Bridge, type Delivery } from "../core/bridge";
 import { State, type ClaudeSession } from "../core/state";
 import { isAway } from "./away";
-import { appendStep, resetSummary, setStatus, takeQueued } from "./sessions";
+import { MAX_QUEUE, appendStep, resetSummary, setStatus, takeQueued } from "./sessions";
 
 /** Statuses in which Claude Code sits at its prompt, waiting for one. */
 const AT_PROMPT: ReadonlySet<ClaudeSession["status"]> = new Set(["idle", "finished", "error"]);
@@ -22,12 +25,16 @@ const AT_PROMPT: ReadonlySet<ClaudeSession["status"]> = new Set(["idle", "finish
 const RETRY_MS = 15_000;
 /** The terminal couldn't be reached: ask again, but rarely. */
 const FAILED_RETRY_MS = 60_000;
+/** A typed prompt has this long to show up as a UserPromptSubmit. */
+const CONFIRM_MS = 10_000;
 
 /** Sessions with a delivery under way. */
 const inFlight = new Set<string>();
 /** Session → earliest time to ask again after a refusal. */
 const retryAt = new Map<string, number>();
 let timer: number | null = null;
+/** Session → the prompt just typed into it, until its UserPromptSubmit. */
+const unconfirmed = new Map<string, { prompt: string; status: ClaudeSession["status"]; timer: number }>();
 
 function ready(s: ClaudeSession): boolean {
   return (
@@ -47,7 +54,7 @@ function check() {
       retryAt.delete(s.id);
       continue;
     }
-    if (inFlight.has(s.id)) continue;
+    if (inFlight.has(s.id) || unconfirmed.has(s.id)) continue;
     const at = retryAt.get(s.id) ?? 0;
     if (at > now) next = Math.min(next, at);
     else void deliver(s);
@@ -68,6 +75,8 @@ async function deliver(s: ClaudeSession) {
   void Bridge.log(`queue deliver ${s.name}: ${result}`);
   if (result === "sent") {
     retryAt.delete(s.id);
+    const status = s.status;
+    unconfirmed.set(s.id, { prompt, status, timer: window.setTimeout(() => unanswered(s.id), CONFIRM_MS) });
     takeQueued(s, prompt);
     // Same as a Stop that carried a queued prompt: the session is on it now,
     // and its UserPromptSubmit is on the way.
@@ -79,6 +88,30 @@ async function deliver(s: ClaudeSession) {
     retryAt.set(s.id, Date.now() + wait);
   }
   State.notify();
+}
+
+/** No UserPromptSubmit after a typed prompt: it goes back to the front of the queue. */
+function unanswered(sessionId: string) {
+  const pending = unconfirmed.get(sessionId);
+  unconfirmed.delete(sessionId);
+  const s = State.sessions.find((x) => x.id === sessionId);
+  if (!pending || !s) return;
+  void Bridge.log(`queue deliver ${s.name}: no UserPromptSubmit, prompt back in the queue`);
+  // Before anything that could run check(): no instant retype.
+  retryAt.set(s.id, Date.now() + FAILED_RETRY_MS);
+  s.queue = [pending.prompt, ...s.queue].slice(0, MAX_QUEUE);
+  void Bridge.queueSet(s.id, s.queue);
+  // Undo the "thinking" the delivery assumed, unless something else happened.
+  if (s.status === "thinking") setStatus(s, pending.status);
+  State.notify();
+}
+
+/** hooks.ts, on every UserPromptSubmit: a typed prompt made it. */
+export function promptArrived(sessionId: string) {
+  const pending = unconfirmed.get(sessionId);
+  if (!pending) return;
+  window.clearTimeout(pending.timer);
+  unconfirmed.delete(sessionId);
 }
 
 export function registerDelivery() {

@@ -13,6 +13,7 @@ import {
   startSubagent, stopSubagent, takeQueued, touchSession,
 } from "./sessions";
 import { noteActivity } from "./away";
+import { promptArrived } from "./deliver";
 
 const CLAUDE_ID = "integration_claude";
 
@@ -302,6 +303,7 @@ function handleHook(island: Island, payload: HookPayload) {
       break;
 
     case "UserPromptSubmit": {
+      promptArrived(session.id);
       // You just typed into this one: it's the one to watch.
       makeCurrent(session.id);
       resetSummary(session);
