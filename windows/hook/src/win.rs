@@ -1,19 +1,33 @@
-//! The little bit of Win32 the relay needs: who we are, and who is on the other
-//! end of the pipe.
+//! The little bit of Win32 the relay needs: who we are, who is on the other
+//! end of the pipe, and which Claude Code process we belong to.
 //!
 //! Named pipes live in a machine-wide namespace, so `\\.\pipe\coucou-<name>` can
 //! be created by *any* account that gets there first. Two defences, both cheap:
 //! the pipe name carries our SID, and once connected we check the server process
 //! really belongs to us before sending anything.
 
-use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, LocalFree, HLOCAL};
+use windows::core::{w, PWSTR};
+use windows::Win32::Foundation::{
+    CloseHandle, FILETIME, GENERIC_READ, GENERIC_WRITE, HANDLE, LocalFree, HLOCAL,
+};
 use windows::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows::Win32::Security::{GetTokenInformation, TokenUser, TOKEN_QUERY, TOKEN_USER};
+use windows::Win32::Storage::FileSystem::{
+    CreateFileW, FILE_FLAGS_AND_ATTRIBUTES, FILE_SHARE_READ, FILE_SHARE_WRITE, OPEN_EXISTING,
+};
+use windows::Win32::System::Console::{
+    AttachConsole, FreeConsole, WriteConsoleInputW, INPUT_RECORD, INPUT_RECORD_0, KEY_EVENT,
+    KEY_EVENT_RECORD, KEY_EVENT_RECORD_0,
+};
+use windows::Win32::System::Diagnostics::ToolHelp::{
+    CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
+};
 use windows::Win32::System::Pipes::GetNamedPipeServerProcessId;
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    GetCurrentProcess, GetProcessTimes, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION,
 };
+use windows::Win32::UI::Input::KeyboardAndMouse::{MapVirtualKeyW, MAPVK_VK_TO_VSC, VK_RETURN};
 
 /// The SID of the account this process runs as, as `S-1-5-21-…`.
 pub fn current_user_sid() -> Option<String> {
@@ -73,4 +87,162 @@ unsafe fn token_sid(process: HANDLE) -> Option<String> {
     let sid = text.to_string().ok();
     let _ = LocalFree(Some(HLOCAL(text.0 as *mut _)));
     sid
+}
+
+// ── The session's own process, and typing into its console ────────────────────
+
+/// Process names that run Claude Code itself: the native build, or the npm one.
+const CLAUDE_EXES: &[&str] = &["claude.exe", "node.exe"];
+
+/// The Claude Code process that ran this hook, as `(pid, creation time)`.
+///
+/// Claude Code starts hooks through a shell (`bash.exe`, sometimes several
+/// deep, or `cmd.exe`), so we walk up the parents to the first `claude.exe` —
+/// or `node.exe` for an npm install. The creation time travels with the pid so
+/// `inject` can tell that process from a later one that reused its number.
+pub fn claude_process() -> Option<(u32, u64)> {
+    let procs = process_table()?;
+    let mut pid = std::process::id();
+    for _ in 0..16 {
+        let parent = procs.iter().find(|p| p.0 == pid)?.1;
+        let name = &procs.iter().find(|p| p.0 == parent)?.2;
+        if CLAUDE_EXES.iter().any(|exe| name.eq_ignore_ascii_case(exe)) {
+            return Some((parent, process_started(parent)?));
+        }
+        pid = parent;
+    }
+    None
+}
+
+/// `(pid, parent pid, exe name)` for every process on the machine.
+fn process_table() -> Option<Vec<(u32, u32, String)>> {
+    unsafe {
+        let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0).ok()?;
+        let mut entry = PROCESSENTRY32W {
+            dwSize: std::mem::size_of::<PROCESSENTRY32W>() as u32,
+            ..Default::default()
+        };
+        let mut table = Vec::new();
+        let mut more = Process32FirstW(snap, &mut entry).is_ok();
+        while more {
+            let exe = &entry.szExeFile;
+            let len = exe.iter().position(|&c| c == 0).unwrap_or(exe.len());
+            table.push((entry.th32ProcessID, entry.th32ParentProcessID, String::from_utf16_lossy(&exe[..len])));
+            more = Process32NextW(snap, &mut entry).is_ok();
+        }
+        let _ = CloseHandle(snap);
+        Some(table)
+    }
+}
+
+/// When a process started, as a FILETIME count. None once it is gone.
+fn process_started(pid: u32) -> Option<u64> {
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+        let mut times = [FILETIME::default(); 4];
+        let [created, exited, kernel, user] = &mut times;
+        let ok = GetProcessTimes(process, created, exited, kernel, user).is_ok();
+        let _ = CloseHandle(process);
+        ok.then(|| (times[0].dwHighDateTime as u64) << 32 | times[0].dwLowDateTime as u64)
+    }
+}
+
+/// Whether `pid` is still the process we were told about, and runs as us.
+fn same_process(pid: u32, started: u64) -> bool {
+    let Some(mine) = current_user_sid() else { return false };
+    if process_started(pid) != Some(started) {
+        return false;
+    }
+    unsafe {
+        let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+            return false;
+        };
+        let theirs = token_sid(process);
+        let _ = CloseHandle(process);
+        theirs.as_deref() == Some(mine.as_str())
+    }
+}
+
+/// Types `text` into the console of `pid` and presses Enter, as if the user had.
+///
+/// `AttachConsole` + `WriteConsoleInputW` put key events straight into that
+/// console's input buffer: no focus, no clipboard, any terminal behind ConPTY,
+/// and it works with the screen locked. It changes this whole process's
+/// console, which is why it lives in the relay and not in Coucou.
+///
+/// A pid that no longer belongs to the same process (Claude Code exited and
+/// Windows gave the number to, say, a shell) is refused: typing a prompt there
+/// could run it as a command.
+pub fn inject(pid: u32, started: u64, text: &str) -> Result<(), String> {
+    if !same_process(pid, started) {
+        return Err(format!("process {pid} is no longer that Claude Code session"));
+    }
+    // An Enter in the middle would send half the prompt: newlines become spaces.
+    let text = text.replace("\r\n", " ").replace(['\r', '\n'], " ");
+    let typed: Vec<INPUT_RECORD> = text
+        .encode_utf16()
+        .flat_map(|unit| [key(true, 0, 0, unit), key(false, 0, 0, unit)])
+        .collect();
+    unsafe {
+        let scan = MapVirtualKeyW(VK_RETURN.0 as u32, MAPVK_VK_TO_VSC) as u16;
+        let enter = [key(true, VK_RETURN.0, scan, 13), key(false, VK_RETURN.0, scan, 13)];
+
+        // Coucou starts us without a console; this is only in case it didn't.
+        let _ = FreeConsole();
+        AttachConsole(pid).map_err(|e| format!("AttachConsole: {e}"))?;
+        let result = CreateFileW(
+            w!("CONIN$"),
+            (GENERIC_READ | GENERIC_WRITE).0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES(0),
+            None,
+        )
+        .map_err(|e| format!("CONIN$: {e}"))
+        .and_then(|input| {
+            let sent = write_input(input, &typed).and_then(|()| {
+                // A beat before Enter, so the text doesn't arrive as one paste
+                // that swallows the Enter with it.
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                write_input(input, &enter)
+            });
+            let _ = CloseHandle(input);
+            sent
+        });
+        let _ = FreeConsole();
+        result
+    }
+}
+
+/// One key event carrying a UTF-16 unit (or a bare virtual key, for Enter).
+fn key(down: bool, vk: u16, scan: u16, unit: u16) -> INPUT_RECORD {
+    INPUT_RECORD {
+        EventType: KEY_EVENT as u16,
+        Event: INPUT_RECORD_0 {
+            KeyEvent: KEY_EVENT_RECORD {
+                bKeyDown: down.into(),
+                wRepeatCount: 1,
+                wVirtualKeyCode: vk,
+                wVirtualScanCode: scan,
+                uChar: KEY_EVENT_RECORD_0 { UnicodeChar: unit },
+                dwControlKeyState: 0,
+            },
+        },
+    }
+}
+
+/// `WriteConsoleInputW` may take fewer records than offered: loop until done.
+fn write_input(input: HANDLE, records: &[INPUT_RECORD]) -> Result<(), String> {
+    let mut done = 0;
+    while done < records.len() {
+        let mut written = 0u32;
+        unsafe { WriteConsoleInputW(input, &records[done..], &mut written) }
+            .map_err(|e| format!("WriteConsoleInputW: {e}"))?;
+        if written == 0 {
+            return Err("WriteConsoleInputW wrote nothing".into());
+        }
+        done += written as usize;
+    }
+    Ok(())
 }
