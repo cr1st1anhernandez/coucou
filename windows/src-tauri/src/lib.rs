@@ -7,13 +7,17 @@ mod files;
 mod hooks;
 mod integrations;
 mod island;
+mod launch;
 mod library;
 mod log;
+mod phone;
 mod pipe;
+mod remember;
 mod secrets;
 mod settings;
 mod tray;
 mod warp;
+mod webpush;
 mod win_ui;
 mod win_user;
 
@@ -32,7 +36,7 @@ use claude_code::{Channel, CodeChats, CodeReply};
 use files::DroppedFile;
 use hooks::{HookPreview, HookStatus};
 use island::{PollGate, ScreenInfo};
-use pipe::{Pending, Queue};
+use pipe::Pending;
 use settings::Settings;
 
 /// Keeps spawned helpers from flashing a console window.
@@ -69,12 +73,13 @@ fn boot(app: AppHandle, shared: State<Shared>) -> BootInfo {
 #[tauri::command]
 fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
     let settings = settings.normalized();
-    let (screen_changed, autostart_changed) = {
+    let (screen_changed, autostart_changed, phone_changed) = {
         let mut current = shared.settings.lock().unwrap();
         let screen_changed = current.screen != settings.screen;
         let autostart_changed = current.autostart != settings.autostart;
+        let phone_changed = current.phone_enabled != settings.phone_enabled;
         *current = settings.clone();
-        (screen_changed, autostart_changed)
+        (screen_changed, autostart_changed, phone_changed)
     };
     if let Err(err) = settings::save(&settings) {
         eprintln!("[coucou] could not save settings: {err}");
@@ -85,6 +90,9 @@ fn save_settings(app: AppHandle, shared: State<Shared>, settings: Settings) {
         if let Err(err) = result {
             eprintln!("[coucou] autostart: {err}");
         }
+    }
+    if phone_changed {
+        phone::set_enabled(&app, settings.phone_enabled);
     }
     if screen_changed {
         let collapsed = shared.gate.collapsed.load(Ordering::Relaxed);
@@ -222,19 +230,39 @@ fn hooks_apply(
 
 #[tauri::command]
 fn approval_decision(app: AppHandle, request_id: String, decision: String) {
-    pipe::answer(&app, &request_id, &decision);
+    pipe::answer(&app, &request_id, &decision, phone::ClosedBy::Island);
 }
 
 /// The island answered an AskUserQuestion: question text → chosen label(s).
 #[tauri::command]
 fn question_answer(app: AppHandle, request_id: String, answers: HashMap<String, String>) {
-    pipe::answer_question(&app, &request_id, &answers);
+    pipe::answer_question(&app, &request_id, &answers, phone::ClosedBy::Island);
 }
 
 /// The prompts queued on the island for a session, sent one per Stop.
 #[tauri::command]
 fn queue_set(app: AppHandle, session_id: String, prompts: Vec<String>) {
     pipe::set_queue(&app, &session_id, prompts);
+}
+
+/// Sessions from before a restart whose Claude Code is still running, with
+/// their queues: the island shows them again (remember.rs).
+#[tauri::command]
+fn sessions_restore(app: AppHandle) -> Vec<remember::RestoredSession> {
+    remember::restored(&app)
+}
+
+/// A queued prompt couldn't be delivered: the phones hear why (queue-error).
+#[tauri::command]
+fn phone_queue_error(app: AppHandle, session_id: String, reason: String, prompt: String) {
+    phone::queue_error(&app, &session_id, &reason, &prompt);
+}
+
+/// A session that is not working has a queued prompt: type it into its
+/// terminal. `away` is the island's own guess that the user left the PC.
+#[tauri::command]
+async fn queue_deliver(app: AppHandle, session_id: String, prompt: String, away: bool) -> pipe::Delivery {
+    pipe::deliver(&app, &session_id, &prompt, away).await
 }
 
 /// The island has the card on screen, so the long wait for a human may begin.
@@ -446,6 +474,41 @@ fn log_line(message: String) {
     log::line(format!("ui  {message}"));
 }
 
+// ── iPhone ────────────────────────────────────────────────────────────────────
+
+/// The settings window's iPhone section: server state and the Tailscale URL.
+#[tauri::command]
+async fn phone_status(app: AppHandle) -> Result<phone::PhoneStatus, String> {
+    // `tailscale status` is a process launch: off the main thread.
+    tauri::async_runtime::spawn_blocking(move || phone::status(&app))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// The island's sessions changed (debounced, and only while the phone server
+/// is on): the phones get the new list.
+#[tauri::command]
+fn phone_publish(app: AppHandle, sessions: Vec<phone::PhoneSession>, away: bool) {
+    phone::publish(&app, sessions, away);
+}
+
+/// "Emparejar iPhone": a one-time 6-digit code, valid for 5 minutes.
+#[tauri::command]
+fn phone_pair_code(app: AppHandle) -> phone::PairCode {
+    phone::new_pair_code(&app)
+}
+
+#[tauri::command]
+fn phone_devices(app: AppHandle) -> Vec<phone::DeviceInfo> {
+    phone::devices(&app)
+}
+
+/// "Quitar": the device is forgotten and its connections close at once.
+#[tauri::command]
+fn phone_revoke(app: AppHandle, device_id: String) {
+    phone::revoke(&app, &device_id);
+}
+
 // ── Settings window ───────────────────────────────────────────────────────────
 
 /// WebView2 allows exactly one browser environment per app, and its options are
@@ -516,6 +579,8 @@ pub fn run() {
     let loaded = settings::load();
     let gate = Arc::new(PollGate::new());
 
+    // Sessions and queues from before a restart (remember.rs).
+    let (memory, queue) = remember::load();
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             let _ = app.emit_to(island::WINDOW_LABEL, "tray", "open".to_string());
@@ -527,7 +592,9 @@ pub fn run() {
             gate: gate.clone(),
         })
         .manage(Pending::default())
-        .manage(Queue::default())
+        .manage(queue)
+        .manage(memory)
+        .manage(phone::PhoneHub::load())
         .manage(Chat::default())
         .manage(CodeChats::default())
         .invoke_handler(tauri::generate_handler![
@@ -558,6 +625,9 @@ pub fn run() {
             approval_ack,
             approval_decline,
             queue_set,
+            queue_deliver,
+            sessions_restore,
+            phone_queue_error,
             log_line,
             chat_send,
             chat_reset,
@@ -568,6 +638,11 @@ pub fn run() {
             refresh_integration,
             open_settings_window,
             set_paused,
+            phone_status,
+            phone_publish,
+            phone_pair_code,
+            phone_devices,
+            phone_revoke,
         ])
         .setup(move |app| {
             let handle = app.handle().clone();
@@ -588,6 +663,9 @@ pub fn run() {
             hooks::ensure_hook_exe(&handle);
             pipe::start(handle.clone());
             integrations::start(handle.clone());
+            if loaded.phone_enabled {
+                phone::set_enabled(&handle, true);
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

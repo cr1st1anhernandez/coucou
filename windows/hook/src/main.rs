@@ -18,6 +18,12 @@
 //!   with nothing, and nothing lets the turn end as usual.
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
+//!
+//! `coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear]` is
+//! Coucou's, not Claude Code's: it types the text on stdin into that process's
+//! console and presses Enter. Coucou uses it to hand a prompt queued on the
+//! iPhone to a session that has finished its turn and would otherwise never get
+//! another Stop, and to start Claude Code in a Warp tab the iPhone opened.
 
 use std::io::{Read, Write};
 use std::sync::mpsc;
@@ -81,6 +87,9 @@ fn connect() -> Option<std::fs::File> {
 const INTERNAL_ENV: &str = "COUCOU_INTERNAL";
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("inject") {
+        std::process::exit(inject());
+    }
     if std::env::var_os(INTERNAL_ENV).is_some() {
         // Drain stdin so Claude Code never sees a broken pipe.
         let _ = std::io::copy(&mut std::io::stdin(), &mut std::io::sink());
@@ -109,6 +118,37 @@ fn main() {
     }
     // Nothing printed: Claude Code asks in the terminal, as if we were not here.
     std::process::exit(0);
+}
+
+/// `inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear]`, text on stdin.
+/// Exit code 0 when the text was typed, 1 otherwise, with the reason on stderr
+/// for Coucou's log.
+fn inject() -> i32 {
+    let args: Vec<String> = std::env::args().collect();
+    let value = |flag: &str| {
+        args.iter()
+            .position(|a| a == flag)
+            .and_then(|i| args.get(i + 1))
+            .and_then(|v| v.parse::<u64>().ok())
+    };
+    let (Some(pid), Some(started)) = (value("--pid"), value("--started")) else {
+        eprintln!("usage: coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear]");
+        return 1;
+    };
+    let mut prompt = String::new();
+    if std::io::stdin().read_to_string(&mut prompt).is_err() || prompt.trim().is_empty() {
+        eprintln!("no prompt on stdin");
+        return 1;
+    }
+    let wait_ready = value("--wait-ready").map(Duration::from_millis);
+    let clear = args.iter().any(|a| a == "--clear");
+    match win::inject(pid as u32, started, prompt.trim(), wait_ready, clear) {
+        Ok(()) => 0,
+        Err(err) => {
+            eprintln!("{err}");
+            1
+        }
+    }
 }
 
 /// The documented PermissionRequest or Stop output. Anything we do not
@@ -255,6 +295,13 @@ fn read_event() -> Option<(String, String, Option<serde_json::Value>)> {
             let value = std::env::var(var).unwrap_or_default();
             map.insert(key.into(), serde_json::Value::String(value));
         }
+    }
+
+    // The Claude Code process behind this session, so Coucou can type a queued
+    // prompt into its terminal once the turn is over (see `inject`).
+    if let Some((pid, started)) = win::claude_process() {
+        map.insert("coucou_claude_pid".into(), serde_json::json!(pid));
+        map.insert("coucou_claude_started".into(), serde_json::json!(started));
     }
 
     // The repo (or worktree) the session works in, whatever subfolder it is in

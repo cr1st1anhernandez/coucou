@@ -5,6 +5,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { Settings } from "./state";
+import type { PhoneSession } from "../island/phone";
 
 export const IS_TAURI =
   typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -25,6 +26,23 @@ export interface BootInfo {
   screen: { x: number; y: number; width: number; height: number; scale: number };
   version: string;
   hookPath: string;
+}
+
+/** What became of a queue_deliver (pipe::Delivery). */
+export type Delivery = "sent" | "stale" | "user-active" | "no-terminal" | "failed";
+
+/** Why a queued prompt couldn't be delivered (`queue-error` for the phones). */
+export type QueueError = "no-terminal" | "failed" | "not-received";
+
+/** A session from before a restart (remember.rs). */
+export interface RestoredSession {
+  id: string;
+  cwd: string;
+  root: string | null;
+  focusUrl: string | null;
+  status: string;
+  lastEventAt: number;
+  queue: string[];
 }
 
 export const Bridge = {
@@ -86,6 +104,14 @@ export const Bridge = {
   /** The prompts queued for a session; Coucou sends the first one when its turn ends. */
   queueSet: (sessionId: string, prompts: string[]) =>
     call<void>("queue_set", { sessionId, prompts }),
+  /** Types the first queued prompt into the terminal of a session that isn't working. */
+  queueDeliver: (sessionId: string, prompt: string, away: boolean) =>
+    call<Delivery>("queue_deliver", { sessionId, prompt, away }),
+  /** Tells the phones a queued prompt couldn't be delivered, and why. */
+  phoneQueueError: (sessionId: string, reason: QueueError, prompt: string) =>
+    call<void>("phone_queue_error", { sessionId, reason, prompt }),
+  /** Sessions still running from before Coucou restarted, with their queues. */
+  sessionsRestore: () => call<RestoredSession[]>("sessions_restore"),
 
   // ── Chat, files, secrets ──────────────────────────────────────────────────
   /** One chat turn. The API key and any file bytes never leave Rust. */
@@ -135,7 +161,40 @@ export const Bridge = {
 
   /** Tray → Pause. Stops the integration pollers, not just the island. */
   setPaused: (paused: boolean) => call<void>("set_paused", { paused }),
+
+  // ── iPhone (phone.rs) ─────────────────────────────────────────────────────
+  /** Server state and the Tailscale URL, for the settings window. */
+  phoneStatus: () => call<PhoneStatus>("phone_status"),
+  /** The island's sessions, for the phones. Only sent when something changed. */
+  phonePublish: (sessions: PhoneSession[], away: boolean) =>
+    call<void>("phone_publish", { sessions, away }),
+  /** A one-time 6-digit code, valid 5 minutes; a new one replaces the last. */
+  phonePairCode: () => call<{ code: string; expiresAt: number }>("phone_pair_code"),
+  phoneDevices: () => call<PhoneDevice[]>("phone_devices"),
+  /** Forgets a paired phone; its open connections close at once. */
+  phoneRevoke: (deviceId: string) => call<void>("phone_revoke", { deviceId }),
 };
+
+export interface PhoneDevice {
+  deviceId: string;
+  device: string;
+  createdAt: number;
+  lastSeen: number;
+  /** It allowed notifications. */
+  push: boolean;
+}
+
+export interface PhoneStatus {
+  running: boolean;
+  /** Why the server couldn't start, e.g. the port is taken. */
+  error: string | null;
+  port: number;
+  /** `https://<pc>.<tailnet>.ts.net`, when Tailscale can tell. */
+  url: string | null;
+  tailscale: boolean;
+  webDir: string;
+  webInstalled: boolean;
+}
 
 export interface IntegrationUpdate {
   id: string;

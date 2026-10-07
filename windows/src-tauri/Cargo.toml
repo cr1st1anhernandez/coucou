@@ -19,12 +19,13 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
-tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt"] }
+tokio = { version = "1", features = ["net", "io-util", "sync", "time", "rt", "macros"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 keyring = { version = "3", features = ["windows-native"] }
 # The #[implement] macro behind the island's own file drop target needs it by name.
 windows-core = "0.61"
 windows = { version = "0.61", features = [
+  "Wdk_System_Threading",
   "Win32_Foundation",
   "Win32_Graphics_Gdi",
   "Win32_Security",
@@ -32,6 +33,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Com",
   "Win32_System_Com_StructuredStorage",
   "Win32_System_DataExchange",
+  "Win32_System_Diagnostics_ToolHelp",
   "Win32_System_Memory",
   "Win32_System_Ole",
   "Win32_System_SystemInformation",
@@ -43,3 +45,12 @@ windows = { version = "0.61", features = [
   "Win32_UI_WindowsAndMessaging",
 ] }
 tauri-plugin-drag = "2.1.1"
+# The iPhone server (phone.rs): HTTP + WebSocket on 127.0.0.1, pairing tokens
+# and Web Push (RFC 8291 / 8292) done with RustCrypto — no OpenSSL.
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+sha2 = "0.10"
+getrandom = "0.2"
+base64 = "0.22"
+hkdf = "0.12"
+aes-gcm = "0.10"
+p256 = { version = "0.13", features = ["ecdh", "ecdsa"] }

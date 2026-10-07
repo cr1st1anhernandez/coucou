@@ -336,6 +336,170 @@ function librarySection(): HTMLElement {
   );
 }
 
+// ── iPhone section ────────────────────────────────────────────────────────────
+
+/**
+ * The phone server: on/off, whether it's listening, and how the iPhone reaches
+ * it through Tailscale. Redrawn whenever Rust says something changed.
+ */
+function phoneSection(): HTMLElement {
+  const dot = statusDot(false);
+  const body = h("div", { style: "display:flex;flex-direction:column;gap:12px" });
+  const section = h("section", {}, h("h2", {}, dot, h("span", { text: "iPhone" })), body);
+  /** The code on screen survives a redraw until it expires. */
+  let pairing: { code: string; expiresAt: number } | null = null;
+  let pairTimer: number | null = null;
+
+  async function draw() {
+    const status = settings.phoneEnabled ? await Bridge.phoneStatus() : null;
+    clear(body);
+    dot.style.background = status?.running ? "#22c55e" : "#f4505e";
+    body.append(
+      h("div", {
+        class: "hint",
+        text: "Ve tus sesiones de Claude Code, aprueba permisos, contesta preguntas y encola prompts desde el iPhone, también fuera de casa. Solo funciona dentro de tu red de Tailscale; nada queda expuesto a internet.",
+      }),
+      h("div", { class: "row" },
+        h("label", { text: "Acceso desde el iPhone" }),
+        toggle(settings.phoneEnabled, (v) => {
+          settings.phoneEnabled = v;
+          void save().then(draw);
+        }),
+      ),
+    );
+    if (!status) return;
+
+    if (status.error) {
+      body.append(h("div", { class: "notice err", text: status.error }));
+    } else if (status.running) {
+      body.append(h("div", { class: "row" },
+        h("label", { text: "Servidor" }),
+        h("span", { class: "path", text: `127.0.0.1:${status.port}` }),
+      ));
+    }
+
+    if (status.url) {
+      body.append(h("div", { class: "row" },
+        h("label", { text: "Dirección" }),
+        h("span", { class: "path", text: status.url }),
+        h("button", { text: "Copiar", onclick: () => void Bridge.libraryCopyText(status.url!).catch(() => {}) }),
+      ));
+    } else {
+      body.append(h("div", {
+        class: "notice warn",
+        text: status.tailscale
+          ? `Tailscale está instalado pero no dio su dirección. Inicia sesión en Tailscale y activa MagicDNS y HTTPS en login.tailscale.com/admin/dns. Luego corre: tailscale serve --bg ${status.port}`
+          : `Instala Tailscale en esta PC y en el iPhone con la misma cuenta (tailscale.com/download). Luego activa MagicDNS y HTTPS, y corre: tailscale serve --bg ${status.port}`,
+      }));
+    }
+
+    if (!status.webInstalled) {
+      body.append(h("div", {
+        class: "notice warn",
+        text: `La PWA todavía no está en ${status.webDir}. Despliégala con npm run deploy desde su proyecto.`,
+      }));
+    }
+
+    if (!status.running) return;
+    body.append(pairRow(), await deviceList(), ...launchRows());
+  }
+
+  /** Where the iPhone may open new sessions, and whether it may skip permissions. */
+  function launchRows(): HTMLElement[] {
+    const roots = h("input", {
+      type: "text",
+      value: settings.phoneLaunchRoots.join("; "),
+      placeholder: "C:\\Users\\…\\Projects",
+      spellcheck: "false",
+      style: "flex:1 1 auto;min-width:0",
+    }) as HTMLInputElement;
+    const saved = h("span", { class: "hint" });
+    const saveRoots = h("button", {
+      text: "Guardar",
+      onclick: async () => {
+        settings.phoneLaunchRoots = roots.value.split(";").map((r) => r.trim()).filter(Boolean);
+        await save();
+        saved.textContent = "Guardado.";
+      },
+    });
+    return [
+      h("div", {
+        class: "hint",
+        text: "Desde el iPhone puedes abrir una sesión nueva de Claude Code en cualquier subcarpeta de estas carpetas (sepáralas con ;) o donde ya hayas trabajado. Solo en carpetas en las que Claude Code ya confía.",
+      }),
+      h("div", { class: "row" }, h("label", { text: "Carpetas" }), roots, saveRoots, saved),
+      h("div", { class: "row" },
+        h("label", { text: "Permitir que el iPhone abra sesiones sin permisos" }),
+        toggle(settings.phoneSkipPermissions, (v) => {
+          settings.phoneSkipPermissions = v;
+          void save();
+        }),
+      ),
+      h("div", {
+        class: "hint",
+        text: "Con esto encendido, el iPhone puede arrancar Claude Code con --dangerously-skip-permissions: hará cambios y correrá comandos sin pedirte aprobación. Además necesita \"skipDangerousModePermissionPrompt\": true en ~/.claude/settings.json; si no, Claude Code se detiene en su advertencia.",
+      }),
+    ];
+  }
+
+  /** "Emparejar iPhone" → a big one-time code, gone after 5 minutes. */
+  function pairRow(): HTMLElement {
+    const row = h("div", { class: "row" });
+    if (pairing && pairing.expiresAt > Date.now()) {
+      const left = Math.max(1, Math.round((pairing.expiresAt - Date.now()) / 60_000));
+      row.append(
+        h("label", { text: "Código" }),
+        h("span", { class: "pair-code", text: `${pairing.code.slice(0, 3)} ${pairing.code.slice(3)}` }),
+        h("span", { class: "hint", text: `Escríbelo en la app del iPhone. Vale ${left} min y una sola vez.` }),
+      );
+      return row;
+    }
+    row.append(
+      h("label", { text: "Nuevo iPhone" }),
+      h("button", {
+        class: "primary",
+        text: "Emparejar iPhone",
+        onclick: async () => {
+          pairing = await Bridge.phonePairCode();
+          if (pairTimer != null) window.clearTimeout(pairTimer);
+          // Redraws once it expires so a dead code never stays on screen.
+          if (pairing) pairTimer = window.setTimeout(() => { pairing = null; void draw(); }, pairing.expiresAt - Date.now());
+          void draw();
+        },
+      }),
+    );
+    return row;
+  }
+
+  async function deviceList(): Promise<HTMLElement> {
+    const list = h("div", { style: "display:flex;flex-direction:column;gap:6px" });
+    const devices = (await Bridge.phoneDevices()) ?? [];
+    if (devices.length === 0) {
+      list.append(h("div", { class: "hint", text: "Todavía no hay ningún iPhone emparejado." }));
+      return list;
+    }
+    for (const d of devices) {
+      const seen = new Date(d.lastSeen).toLocaleString("es-MX", { dateStyle: "medium", timeStyle: "short" });
+      list.append(h("div", { class: "row" },
+        h("label", { text: d.device }),
+        h("span", { class: "hint", text: `Visto ${seen}${d.push ? " · con notificaciones" : ""}` }),
+        h("span", { class: "spacer" }),
+        h("button", { class: "danger", text: "Quitar", onclick: () => void Bridge.phoneRevoke(d.deviceId) }),
+      ));
+    }
+    return list;
+  }
+
+  void draw();
+  // Pairing, revoking or the server starting/stopping — and a phone that just
+  // paired should make its own code disappear.
+  void onEvent<null>("phone-changed", () => {
+    pairing = null;
+    void draw();
+  });
+  return section;
+}
+
 // ── Integrations section ──────────────────────────────────────────────────────
 
 interface IntegrationDef {
@@ -574,6 +738,7 @@ async function main() {
     claudeSection(status),
     apiSection(hasKey),
     librarySection(),
+    phoneSection(),
     integrationsSection(present),
     generalSection(),
     soundsSection(),

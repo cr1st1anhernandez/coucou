@@ -109,7 +109,7 @@ fn press_ctrl_v() {
 }
 
 /// The default per-user install, then the machine-wide one, then %PATH%.
-fn find_exe() -> Option<PathBuf> {
+pub(crate) fn find_exe() -> Option<PathBuf> {
     let installs = [
         ("LOCALAPPDATA", r"Programs\Warp\warp.exe"),
         ("ProgramFiles", r"Warp\warp.exe"),
