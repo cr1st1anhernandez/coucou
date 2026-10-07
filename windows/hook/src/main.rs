@@ -19,7 +19,7 @@
 //!
 //! Usage: `coucou-hook <EventName>` (the name is also read from the JSON).
 //!
-//! `coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear] [--enter-only]` is
+//! `coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear] [--enter-only] [--clear-only]` is
 //! Coucou's, not Claude Code's: it types the text on stdin into that process's
 //! console and presses Enter. Coucou uses it to hand a prompt queued on the
 //! iPhone to a session that has finished its turn and would otherwise never get
@@ -120,7 +120,7 @@ fn main() {
     std::process::exit(0);
 }
 
-/// `inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear] [--enter-only]`, text on stdin.
+/// `inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear] [--enter-only] [--clear-only]`, text on stdin.
 /// Exit code 0 when the text was typed, 1 otherwise, with the reason on stderr
 /// for Coucou's log.
 fn inject() -> i32 {
@@ -132,19 +132,24 @@ fn inject() -> i32 {
             .and_then(|v| v.parse::<u64>().ok())
     };
     let (Some(pid), Some(started)) = (value("--pid"), value("--started")) else {
-        eprintln!("usage: coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear] [--enter-only]");
+        eprintln!("usage: coucou-hook inject --pid <pid> --started <time> [--wait-ready <ms>] [--clear] [--enter-only] [--clear-only]");
         return 1;
     };
     // `--enter-only`: the prompt is already typed, press Enter again.
+    // `--clear-only`: empty the input box of a prompt that never went, no Enter.
     let enter_only = args.iter().any(|a| a == "--enter-only");
+    let clear_only = args.iter().any(|a| a == "--clear-only");
     let mut prompt = String::new();
-    if !enter_only && (std::io::stdin().read_to_string(&mut prompt).is_err() || prompt.trim().is_empty()) {
+    if !enter_only
+        && !clear_only
+        && (std::io::stdin().read_to_string(&mut prompt).is_err() || prompt.trim().is_empty())
+    {
         eprintln!("no prompt on stdin");
         return 1;
     }
     let wait_ready = value("--wait-ready").map(Duration::from_millis);
-    let clear = args.iter().any(|a| a == "--clear");
-    match win::inject(pid as u32, started, prompt.trim(), wait_ready, clear) {
+    let clear = clear_only || args.iter().any(|a| a == "--clear");
+    match win::inject(pid as u32, started, prompt.trim(), wait_ready, clear, !clear_only) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!("{err}");

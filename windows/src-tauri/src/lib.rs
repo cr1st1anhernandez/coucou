@@ -271,6 +271,12 @@ async fn queue_press_enter(app: AppHandle, session_id: String, away: bool) -> bo
     pipe::press_enter(&app, &session_id, away).await
 }
 
+/// A typed prompt went back to the queue: empty the input box it sits in.
+#[tauri::command]
+async fn queue_clear_input(app: AppHandle, session_id: String, away: bool) -> bool {
+    pipe::clear_input(&app, &session_id, away).await
+}
+
 /// The island has the card on screen, so the long wait for a human may begin.
 /// Until this arrives the relay only waits a few hundred milliseconds, which is
 /// what stops a paused or unresponsive island from freezing Claude Code.
@@ -633,6 +639,7 @@ pub fn run() {
             queue_set,
             queue_deliver,
             queue_press_enter,
+            queue_clear_input,
             sessions_restore,
             phone_queue_error,
             log_line,
